@@ -66,6 +66,7 @@ class DNAVMM(nn.Module):
                 images = batch["images"]
                 labels = batch["labels"]
                 labels_onehot = torch.Tensor(self.i[labels])
+                breakpoint()
                 barcodes = batch["barcodes"]
 
                 logits = self.forward(images=images, dna=barcodes) # Doesnt work yet, is legit just CLS into class_head
@@ -97,7 +98,7 @@ def collate_fn(batch):
 
 
 if __name__ == "__main__":
-    dataset = load_dataset("dataset.py", name="cropped_256_train", split="train", trust_remote_code=True, token="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")
+    dataset = load_dataset("dataset.py", name="cropped_256_train", split="train", trust_remote_code=True, token=)
     dataset = dataset.with_format("torch", device=device)
 
     # Initialize every single species as a valuen integer
@@ -106,13 +107,11 @@ if __name__ == "__main__":
     n_classes = len(uniq_species)
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
 
-    d_enc = AutoModel.from_pretrained("zhihan1996/DNA_bert_6", token="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")
-    v_enc = AutoModel.from_pretrained("facebook/dinov2-small", token="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")
+    d_enc = AutoModel.from_pretrained("zhihan1996/DNA_bert_6", token=)
+    v_enc = AutoModel.from_pretrained("facebook/dinov2-small", token=)
 
     model = DNAVMM(d_enc, v_enc, n_classes, 0.5)
     model.to(device)
-
-
 
     dataloader = DataLoader(dataset, batch_size=64, collate_fn=collate_fn)
 
