@@ -15,43 +15,45 @@ class VisualEncoder(nn.Module):
         self.visual_encoder = visual_encoder
         visual_encoder_size = 384
 
-        # Number of classes and create np for one hot encoding
-        self.n_classes = n_classes
-        self.i = np.eye(n_classes)
+        self.n_classes = n_classes # Number of classes
+        self.i = np.eye(n_classes) # Matrix for one-hot encoding
 
         # Fully connected classification head
         self.class_head = nn.Linear(visual_encoder_size, n_classes)
         self.dropout = nn.Dropout(0.1)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
 
-        self.optimzer = torch.optim.Adam(self.parameters(), lr=lr)
+        # Loss function
         self.criterion = nn.CrossEntropyLoss()
 
-def forward(self, images):
-    # CLS for embedding
-    embedding = self.visual_encoder(images).last_hidden_state[:,0]
+    def forward(self, images):
+        # CLS for embedding
+        embedding = self.visual_encoder(images).last_hidden_state[:,0]
 
-    # Pass the embedding through the model
-    logits = self.class_head(embedding)
+        # Pass the embedding through the model
+        logits = self.class_head(embedding)
 
-    return logits
+        return logits
 
-def train(self, dataloader, epochs):
-    self.optimizer.zero_grad()
+    def train(self, dataloader, epochs):
+        self.optimizer.zero_grad()
 
-    for i in range(epochs):
-        self.visual_encoder.train()
+        # Loop through the epochs to train the model
+        for i in range(epochs):
+            self.visual_encoder.train()
+            # Iterate over the batches
+            for batch in dataloader:
+                images = batch["images"].to(device)
+                labels = batch["labels"]
+                labels_onehot = torch.tensor(self.i[labels]).to(device)
+                labels = labels.to(device)
 
-        for batch in dataloader:
-            images = batch["images"]
-            labels = batch["labels"]
-            labels_onehot = torch.tensor(self.i[labels])
+                logits = self.forward(images=images)
+                loss = self.criterion(logits, labels_onehot)
 
-            logits = self.forward(images=images)
-            loss = self.criterion(logits, labels_onehot)
+                loss.backward()
 
-            loss.backward()
-
-            self.optimizer.step()
+                self.optimizer.step()
 
 def collate(batch):
     """Custom collation function for dataloader, extract images from the batch and pad them with the largest width from the widest image.
@@ -67,7 +69,6 @@ def collate(batch):
     max_width = max(img.shape[-1] for img in images)
     padded = [F.pad(img, (0, max_width-img.shape[-1], 0, 0)) for img in images]
     return {"images": torch.stack(padded), "labels": torch.Tensor(labels).to(torch.uint16)}
-
 
 if __name__ == "__main__":
     # Load the BIOSCAN5M dataset
