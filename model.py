@@ -53,32 +53,27 @@ class DNAVMM(nn.Module):
     
     # Might not be possible in same class, check RL implementations
     # Ideally, just doing model.train() will do it.
-    def train(self, dataloader):
-        self.dna_encoder.train()
-        self.visual_encoder.train()
-        
-        for batch in dataloader:
-            self.optimizer.zero_grad()
-
-            # INPUTS, should work this way
-            # DOnt forget processor/tokenizer
+    def train(self, dataloader, epochs):
+        for i in range(epochs):
+            self.dna_encoder.train()
+            self.visual_encoder.train()
             
-            images = batch["images"]
-            labels = batch["labels"]
-            labels_onehot = torch.Tensor(self.i[labels])
-            barcodes = batch["barcodes"]
-            breakpoint()
+            for batch in dataloader:
+                self.optimizer.zero_grad()
 
-            logits = self.forward(images=images, dna=barcodes)
-            loss = self.criterion(logits, labels_onehot)
+                # Barcodes unfinished
+                
+                images = batch["images"]
+                labels = batch["labels"]
+                labels_onehot = torch.Tensor(self.i[labels])
+                barcodes = batch["barcodes"]
 
-            loss.backward()
+                logits = self.forward(images=images, dna=barcodes) # Doesnt work yet, is legit just CLS into class_head
+                loss = self.criterion(logits, labels_onehot)
 
-            self.optimizer.step()
-        
-        # Zero grad optim, get input ids for transformers and possible
-        # attention masks. Get labels. Get logits, criterion and loss.backwards()
-        # Make the model do some dataloader training thing
+                loss.backward()
+
+                self.optimizer.step()
 
 
 def collate_fn(batch):
@@ -120,7 +115,6 @@ if __name__ == "__main__":
 
 
     dataloader = DataLoader(dataset, batch_size=64, collate_fn=collate_fn)
-    breakpoint()
 
-    model.train(dataloader)
+    model.train(dataloader, epochs=3)
 
