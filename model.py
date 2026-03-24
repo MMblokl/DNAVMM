@@ -2,9 +2,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 from torch.utils.data import DataLoader
-from transformers import AutoModel
+from transformers import AutoModel, AutoTokenizer
 from datasets import load_dataset
 import numpy as np
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+apitoken =os.getenv("API_KEY")
 
 
 global device
@@ -12,12 +17,13 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class DNAVMM(nn.Module):
-    def __init__(self, d_enc, v_enc, n_classes, lr):
+    def __init__(self, d_enc, v_enc, d_tokenizer, n_classes, lr):
         super(DNAVMM, self).__init__()
         self.visual_encoder = v_enc
         self.dna_encoder = d_enc
+        self.dna_tokenizer = d_tokenizer
         
-        d_enc_size = 786
+        d_enc_size = 768
         v_enc_size = 384
 
         # Create np to_one_hot for ease of use
@@ -26,7 +32,7 @@ class DNAVMM(nn.Module):
 
 
         # Fully connected classification head
-        self.class_head = nn.Linear(v_enc_size, n_classes)
+        self.class_head = nn.Linear(d_enc_size + v_enc_size, n_classes)
         self.dropout = nn.Dropout(0.1)
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
@@ -54,22 +60,25 @@ class DNAVMM(nn.Module):
     # Might not be possible in same class, check RL implementations
     # Ideally, just doing model.train() will do it.
     def train(self, dataloader, epochs):
+        self.dna_encoder.train() # Turns on dropouts
+        self.visual_encoder.train()
+        # Loop through each epoch
         for i in range(epochs):
-            self.dna_encoder.train()
-            self.visual_encoder.train()
-            
             for batch in dataloader:
-                self.optimizer.zero_grad()
+                self.optimizer.zero_grad() # Zero out previous grad
 
                 # Barcodes unfinished
                 
-                images = batch["images"]
+                images = batch["images"].to(device)
                 labels = batch["labels"]
-                labels_onehot = torch.Tensor(self.i[labels])
-                breakpoint()
+                labels_onehot = torch.Tensor(self.i[labels], device=device)
+                labels = labels.to(device)
                 barcodes = batch["barcodes"]
 
-                logits = self.forward(images=images, dna=barcodes) # Doesnt work yet, is legit just CLS into class_head
+                # TODO: This might actually be broken and not working properly
+                tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt')["input_ids"].to(device)
+
+                logits = self.forward(images=images, dna=tokenized_barcodes) # Doesnt work yet, is legit just CLS into class_head
                 loss = self.criterion(logits, labels_onehot)
 
                 loss.backward()
@@ -88,17 +97,14 @@ def collate_fn(batch):
     """
     labels = [species_dict[i["species"]] for i in batch]
     images = [i["image"] for i in batch]
-    #barcodes = [torch.Tensor(i["dna_barcode"]) for i in batch]
+    barcodes = [i["dna_barcode"] for i in batch]
     max_width = max(img.shape[-1] for img in images)
     padded = [F.pad(img, (0, max_width-img.shape[-1], 0, 0)) for img in images]
-    return {"images": torch.stack(padded), "labels": torch.Tensor(labels).to(torch.uint16)}
-
-
-
+    return {"images": torch.stack(padded), "labels": torch.Tensor(labels).to(torch.uint16), "barcodes": barcodes}
 
 
 if __name__ == "__main__":
-    dataset = load_dataset("dataset.py", name="cropped_256_train", split="train", trust_remote_code=True, token=)
+    dataset = load_dataset("dataset.py", name="cropped_256_train", split="train", trust_remote_code=True, token=apitoken)
     dataset = dataset.with_format("torch", device=device)
 
     # Initialize every single species as a valuen integer
@@ -107,10 +113,11 @@ if __name__ == "__main__":
     n_classes = len(uniq_species)
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
 
-    d_enc = AutoModel.from_pretrained("zhihan1996/DNA_bert_6", token=)
-    v_enc = AutoModel.from_pretrained("facebook/dinov2-small", token=)
+    d_enc = AutoModel.from_pretrained("zhihan1996/DNA_bert_6", token=apitoken)
+    v_enc = AutoModel.from_pretrained("facebook/dinov2-small", token=apitoken)
+    d_tokenizer = AutoTokenizer.from_pretrained("zhihan1996/DNA_bert_6", token=apitoken)
 
-    model = DNAVMM(d_enc, v_enc, n_classes, 0.5)
+    model = DNAVMM(d_enc, v_enc, d_tokenizer, n_classes, 0.5)
     model.to(device)
 
     dataloader = DataLoader(dataset, batch_size=64, collate_fn=collate_fn)
