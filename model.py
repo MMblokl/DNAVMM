@@ -23,13 +23,9 @@ class DNAVMM(nn.Module):
         self.dna_encoder = d_enc
         self.dna_tokenizer = d_tokenizer
         
+        self.n_classes = n_classes
         d_enc_size = 768
         v_enc_size = 384
-
-        # Create np to_one_hot for ease of use
-        self.n_classes = n_classes
-        self.i = np.eye(n_classes)
-
 
         # Fully connected classification head
         self.class_head = nn.Linear(d_enc_size + v_enc_size, n_classes)
@@ -69,10 +65,9 @@ class DNAVMM(nn.Module):
 
                 # Barcodes unfinished
                 
-                images = batch["images"].to(device)
+                images = batch["images"]
                 labels = batch["labels"]
-                labels_onehot = torch.Tensor(self.i[labels], device=device)
-                labels = labels.to(device)
+                labels_onehot = F.one_hot(labels, num_classes=self.n_classes)
                 barcodes = batch["barcodes"]
 
                 # TODO: This might actually be broken and not working properly
@@ -100,7 +95,7 @@ def collate_fn(batch):
     barcodes = [i["dna_barcode"] for i in batch]
     max_width = max(img.shape[-1] for img in images)
     padded = [F.pad(img, (0, max_width-img.shape[-1], 0, 0)) for img in images]
-    return {"images": torch.stack(padded), "labels": torch.Tensor(labels).to(torch.uint16), "barcodes": barcodes}
+    return {"images": torch.stack(padded).to(device), "labels": torch.tensor(labels).to(device), "barcodes": barcodes}
 
 
 if __name__ == "__main__":
