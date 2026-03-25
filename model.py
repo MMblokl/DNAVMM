@@ -67,18 +67,19 @@ class DNAVMM(nn.Module):
                 
                 images = batch["images"]
                 labels = batch["labels"]
-                labels_onehot = F.one_hot(labels, num_classes=self.n_classes)
+                #labels_onehot = F.one_hot(labels, num_classes=self.n_classes)
                 barcodes = batch["barcodes"]
 
                 # TODO: This might actually be broken and not working properly
                 tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt')["input_ids"].to(device)
 
                 logits = self.forward(images=images, dna=tokenized_barcodes) # Doesnt work yet, is legit just CLS into class_head
-                loss = self.criterion(logits, labels_onehot)
+                loss = self.criterion(logits, labels)
 
                 loss.backward()
 
                 self.optimizer.step()
+                print(loss)
 
 
 def collate_fn(batch):
@@ -112,7 +113,7 @@ if __name__ == "__main__":
     v_enc = AutoModel.from_pretrained("facebook/dinov2-small", token=apitoken)
     d_tokenizer = AutoTokenizer.from_pretrained("zhihan1996/DNA_bert_6", token=apitoken)
 
-    model = DNAVMM(d_enc, v_enc, d_tokenizer, n_classes, 0.5)
+    model = DNAVMM(d_enc, v_enc, d_tokenizer, n_classes, 1e-4)
     model.to(device)
 
     dataloader = DataLoader(dataset, batch_size=64, collate_fn=collate_fn)
