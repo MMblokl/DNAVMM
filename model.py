@@ -16,13 +16,19 @@ global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class DNAVMM(nn.Module):
-    def __init__(self, d_enc, v_enc, d_tokenizer, n_classes, lr):
+    def __init__(self, d_enc, v_enc, d_tokenizer, params):
         super(DNAVMM, self).__init__()
         self.visual_encoder = v_enc
         self.dna_encoder = d_enc
         self.dna_tokenizer = d_tokenizer
         
-        self.n_classes = n_classes
+
+        self.lr = params["lr"]
+        self.n_classes = params["n_classes"]
+        self.epochs = params["epochs"]
+        self.steps_per_epoch = params["steps_per_epoch"]
+        self.batch_size = params["batch_size"]
+    
         d_enc_size = 768
         v_enc_size = 384
 
@@ -30,12 +36,11 @@ class DNAVMM(nn.Module):
         self.class_head = nn.Linear(d_enc_size + v_enc_size, n_classes)
         self.dropout = nn.Dropout(0.1)
 
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         self.criterion = nn.CrossEntropyLoss()
 
         # Training metrics storage
         self.train_loss = {}
-
 
     # Untested, probably works
     def forward(self, images, dna):
@@ -57,16 +62,16 @@ class DNAVMM(nn.Module):
     
     # Might not be possible in same class, check RL implementations
     # Ideally, just doing model.train() will do it.
-    def fit(self, dataset, epochs, steps_per_epoch=100, batch_size=8):
+    def fit(self, dataset):
         self.train() # Turn on dropouts
         # Loop through each epoch
-        for epoch in range(epochs):
+        for epoch in range(self.epochs):
             self.train_loss[epoch] = []
             
             # Shuffle the dataset at the start for more variable data training
-            dataset = dataset.shuffle()
+            #dataset = dataset.shuffle()
             prev = 0
-            for timestep, idx in enumerate(range(batch_size, len(dataset), batch_size)):
+            for timestep, idx in enumerate(range(self.batch_size, len(dataset), self.batch_size)):
                 # Collate data properly
                 batch = collate_fn(dataset[prev:idx])
 
@@ -89,12 +94,12 @@ class DNAVMM(nn.Module):
                 
                 # Save the loss to storage
                 self.train_loss[epoch].append(loss.item())
-                if timestep == steps_per_epoch:
+                if timestep == self.steps_per_epoch - 1:
                     break
+                print(loss.item(), timestep)
                 
                 # reset prev
                 prev = idx
-            breakpoint()
 
     
     def save(self, path):
@@ -133,7 +138,7 @@ if __name__ == "__main__":
     set_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    
+
     dataset = load_dataset(
         "dataset.py",
         name="cropped_256_train",
@@ -174,8 +179,21 @@ if __name__ == "__main__":
     orig_pos_emb = d_enc.base_model.embeddings.position_embeddings.weight
     d_enc.base_model.embeddings.position_embeddings.weight = torch.nn.Parameter(torch.cat((orig_pos_emb, orig_pos_emb)))
 
-    model = DNAVMM(d_enc, v_enc, d_tokenizer, n_classes, 1e-4)
+
+    
+    parameters = dict(
+        lr = 1e-4,
+        epochs=200,
+        steps_per_epoch=200,
+        batch_size=4,
+        n_classes=n_classes
+
+    )
+
+
+    model = DNAVMM(d_enc, v_enc, d_tokenizer, params=parameters)
     model.to(device)
 
-    model.fit(dataset, epochs=2, steps_per_epoch=20, batch_size=8)
+    model.fit(dataset)
     model.save("/local/mmeb_s4501888/model.weights")
+
