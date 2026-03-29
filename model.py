@@ -28,6 +28,7 @@ class DNAVMM(nn.Module):
         self.epochs = params["epochs"]
         self.steps_per_epoch = params["steps_per_epoch"]
         self.batch_size = params["batch_size"]
+        self.k = params["k"]
     
         d_enc_size = 768
         v_enc_size = 384
@@ -40,13 +41,12 @@ class DNAVMM(nn.Module):
         self.criterion = nn.CrossEntropyLoss()
 
         # Training metrics storage
-        self.train_loss = {}
+        self.train_loss = np.zeros(shape=[self.epochs + 1, self.steps_per_epoch])
 
     # Untested, probably works
     def forward(self, images, dna):
-        # Other options
-        #emb1 = out1.pooler_output
-        #emb1 = out1.last_hidden_state.mean(dim=1)
+        #v_embedding = self.visual_encoder(images).last_hidden_state.mean(dim=1)
+        #d_embedding = self.dna_encoder(**dna).last_hidden_state.mean(dim=1)
         # CLS for embedding.
         v_embedding = self.visual_encoder(images).last_hidden_state[:,0]
         d_embedding = self.dna_encoder(**dna).last_hidden_state[:,0]
@@ -66,22 +66,23 @@ class DNAVMM(nn.Module):
         self.train() # Turn on dropouts
         # Loop through each epoch
         for epoch in range(self.epochs):
-            self.train_loss[epoch] = []
-            
             # Shuffle the dataset at the start for more variable data training
-            #dataset = dataset.shuffle()
+            dataset = dataset.shuffle()
+            
             prev = 0
+            train_loss = []
             for timestep, idx in enumerate(range(self.batch_size, len(dataset), self.batch_size)):
-                # Collate data properly
-                batch = collate_fn(dataset[prev:idx])
-
+                #
                 self.optimizer.zero_grad() # Zero out previous grad
+
+                # Collate data properly
+                batch = collate_fn(dataset[prev:idx], self.k)
 
                 # Single out data
                 images = batch["images"]
                 labels = batch["labels"]
                 barcodes = batch["barcodes"]
-
+                
                 # Tokenize each k-mer in the barcode
                 tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True).to(device)
 
@@ -89,20 +90,20 @@ class DNAVMM(nn.Module):
                 loss = self.criterion(logits, labels)
 
                 loss.backward()
-
                 self.optimizer.step()
                 
                 # Save the loss to storage
-                self.train_loss[epoch].append(loss.item())
+                train_loss.append(loss.item())
                 if timestep == self.steps_per_epoch - 1:
                     break
-                print(loss.item(), timestep)
                 
                 # reset prev
                 prev = idx
-
+            self.train_loss[epoch, :] = np.array(train_loss)
+            print("Train log: ", self.train_loss.mean(axis=1))
     
     def save(self, path):
+        np.save("train_log.npy", self.train_loss)
         torch.save(self.state_dict(), path)
     
 
@@ -110,7 +111,7 @@ class DNAVMM(nn.Module):
         self.load_state_dict(torch.load(path))
 
 
-def collate_fn(batch):
+def collate_fn(batch, k):
     """Custom collation function for dataloader, extract images from the batch and pad them with the largest width from the widest image.
 
     Args:
@@ -153,7 +154,6 @@ if __name__ == "__main__":
     uniq_species = set(dataset["species"])
     n_classes = len(uniq_species)
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
-    k = 6
 
     d_enc = AutoModel.from_pretrained(
         "zhihan1996/DNA_bert_6",
@@ -180,14 +180,13 @@ if __name__ == "__main__":
     d_enc.base_model.embeddings.position_embeddings.weight = torch.nn.Parameter(torch.cat((orig_pos_emb, orig_pos_emb)))
 
 
-    
     parameters = dict(
         lr = 1e-4,
         epochs=200,
         steps_per_epoch=200,
         batch_size=4,
-        n_classes=n_classes
-
+        n_classes=n_classes,
+        k=6,
     )
 
 
