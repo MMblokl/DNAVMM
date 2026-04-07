@@ -9,11 +9,18 @@ from DNA_BERT_encoder import DNAEncoder
 from transformers import DataCollatorForLanguageModeling
 
 # >>>>>>>>>>> UTILITIES <<<<<<<<<<<<
+def get_sequences(file="./csv/BIOSCAN_5M_Insect_Dataset_metadata.csv"):
+    with open(file, 'r') as inputfile:
+        line = inputfile.readline()
+        while len(line) != 0:
+            print(line[11], "\n")
+            line = inputfile.readline().split(',')
+        inputfile.close()
+        
 def BIOSCAN_preprocessing(sequence):
     sequence = sequence.upper()
     sequence = sequence.replace("N", "")
     sequence = sequence.replace("-", "")
-
     return sequence.strip()
 
 def load_model():
@@ -104,6 +111,63 @@ def training_loop(model, tokenizer, optimizer, chunk_size=5000):
             print(f"step {step} loss {loss.item():.4f}")
             save_checkpoint(model, optimizer, step)
 
+
+ # def fit(self, dataloader, eval_dataloader, epochs, device, optimizer):
+    #     metrics = {"train_loss": [], "eval_loss": [], "accuracy": []}
+    #     for epoch in range(epochs):
+    #         self.train()
+    #         train_loss = 0
+
+    #         for batch in dataloader:
+    #             input_ids = batch["input_ids"].to(device)
+    #             attention_mask = batch["attention_mask"].to(device)
+    #             labels = batch["labels"].to(device)
+
+    #             optimizer.zero_grad()
+
+    #             logits = self.forward(input_ids, attention_mask)
+    #             loss = self.criterion(logits, labels)
+
+    #             loss.backward()
+    #             torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+    #             optimizer.step()
+
+    #             train_loss += loss.item()
+
+    #         avg_train_loss = train_loss / len(dataloader)
+    #         metrics["train_loss"].append(avg_train_loss)
+
+    #         # Evaluation
+    #         self.eval()
+    #         eval_loss = 0
+    #         correct = 0
+    #         total = 0
+
+    #         with torch.no_grad():
+    #             for batch in eval_dataloader:
+    #                 input_ids = batch["input_ids"].to(device)
+    #                 attention_mask = batch["attention_mask"].to(device)
+    #                 labels = batch["labels"].to(device)
+
+    #                 logits = self.forward(input_ids, attention_mask)
+    #                 loss = self.criterion(logits, labels)
+
+    #                 eval_loss += loss.item()
+
+    #                 preds = torch.argmax(logits, dim=1)
+    #                 correct += (preds == labels).sum().item()
+    #                 total += labels.size(0)
+    #         # Calculate Metrics
+    #         avg_eval_loss = eval_loss / len(eval_dataloader)
+    #         accuracy = correct / total
+    #         metrics["eval_loss"].append(avg_eval_loss)
+    #         metrics["accuracy"].append(accuracy)
+    #         # Print Metrics
+    #         print(f"Epoch {epoch+1}/{epochs}")
+    #         print(f"Train Loss: {avg_train_loss:.4f}")
+    #         print(f"Val Loss: {avg_eval_loss:.4f}, Acc: {accuracy:.4f}")
+
+    #     return metrics
 
 if __name__ == "__main__":
     chunk_size = 10000
