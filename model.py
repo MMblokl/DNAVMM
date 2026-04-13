@@ -18,15 +18,60 @@ global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class DNAVMM(nn.Module):
-    def __init__(self, d_enc, v_enc, d_tokenizer, i_processor, params):
+    def __init__(
+            self,
+            params: dict,
+            d_enc: str = "zhihan1996/DNA_bert_6",
+            v_enc: str = "facebook/dinov2-small",
+            d_tokenizer: str = "zhihan1996/DNA_bert_6",
+            i_processor: str = 'facebook/dinov2-small',
+            cache_dir: str | bool = False,
+        ):
+        
         super(DNAVMM, self).__init__()
-        
-        
-        self.visual_encoder = v_enc
-        self.dna_encoder = d_enc
-        self.dna_tokenizer = d_tokenizer
-        self.i_processor = i_processor
-        
+
+        # Whether to use pre-defined cache dir for parameters and data
+        if cache_dir:
+            self.dna_encoder = AutoModel.from_pretrained(
+                d_enc,
+                token=apitoken,
+                cache_dir=cache_dir,
+            )
+            self.visual_encoder = AutoModel.from_pretrained(
+                v_enc,
+                token=apitoken,
+                cache_dir=cache_dir,
+            )
+            self.dna_tokenizer = AutoTokenizer.from_pretrained(
+                d_tokenizer,
+                token=apitoken,
+                cache_dir=cache_dir,
+            )
+            self.i_processor = AutoImageProcessor.from_pretrained(
+                i_processor,
+                token=apitoken,
+                cache_dir=cache_dir,
+            )
+        else:
+            self.dna_encoder = AutoModel.from_pretrained(
+                d_enc,
+                token=apitoken,
+            )
+            self.visual_encoder = AutoModel.from_pretrained(
+                v_enc,
+                token=apitoken,
+            )
+            self.dna_tokenizer = AutoTokenizer.from_pretrained(
+                d_tokenizer,
+                token=apitoken,
+            )
+            self.i_processor = AutoImageProcessor.from_pretrained(
+                i_processor,
+                token=apitoken,
+            )
+
+        # Use mode with larger self-attention matrix
+        self.enlargen_tokenizer()
 
         self.lr = params["lr"]
         self.n_classes = params["n_classes"]
@@ -62,6 +107,16 @@ class DNAVMM(nn.Module):
         self.eval_loss = np.zeros(shape=[self.epochs + 1, self.steps_per_epoch])
         self.train_acc = np.zeros(self.epochs)
         self.eval_acc = np.zeros(self.epochs)
+
+    def enlargen_tokenizer(self):
+        # Double size of the model for 1024 input size of DNA
+        self.dna_tokenizer.model_max_length = 1024
+        self.dna_encoder.config.max_positional_embeddings = 1024
+        self.dna_encoder.base_model.embeddings.position_ids = torch.arange(1024).expand((1,-1))
+        self.dna_encoder.base_model.embeddings.token_type_ids = torch.zeros(1024).expand((1,-1))
+        orig_pos_emb = self.dna_encoder.base_model.embeddings.position_embeddings.weight
+        self.dna_encoder.base_model.embeddings.position_embeddings.weight = torch.nn.Parameter(torch.cat((orig_pos_emb, orig_pos_emb)))
+
 
     def collate_fn(self, batch):
         """Custom collation function for dataloader, extract images from the batch and pad them with the largest width from the widest image.
@@ -272,44 +327,12 @@ if __name__ == "__main__":
     )
     eval_dataset = eval_dataset.with_format("torch", device=device)
 
-
     # Initialize every single species as a valuen integer
     uniq_species_train = set(train_dataset["species"])
     uniq_species_eval = set(train_dataset["species"])
     uniq_species = set.union(uniq_species_eval, uniq_species_train)
     n_classes = len(uniq_species)
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
-
-    d_enc = AutoModel.from_pretrained(
-        "zhihan1996/DNA_bert_6",
-        token=apitoken,
-        # cache_dir="/data/s4501888/hf/datasets"
-    )
-    v_enc = AutoModel.from_pretrained(
-        "facebook/dinov2-small",
-        token=apitoken,
-        # cache_dir="/data/s4501888/hf/datasets"
-    )
-    d_tokenizer = AutoTokenizer.from_pretrained(
-        "zhihan1996/DNA_bert_6",
-        token=apitoken,
-        # cache_dir="/data/s4501888/hf/datasets"
-    )
-    processor = AutoImageProcessor.from_pretrained('facebook/dinov2-small',
-                                                   token=apitoken,
-                                            #    cache_dir="/data/s4514998/hf/datasets"
-                                               )
-
-
-
-    # Double size of the model for 1024 input size of DNA
-    d_tokenizer.model_max_length = 1024
-    d_enc.config.max_positional_embeddings = 1024
-    d_enc.base_model.embeddings.position_ids = torch.arange(1024).expand((1,-1))
-    d_enc.base_model.embeddings.token_type_ids = torch.zeros(1024).expand((1,-1))
-    orig_pos_emb = d_enc.base_model.embeddings.position_embeddings.weight
-    d_enc.base_model.embeddings.position_embeddings.weight = torch.nn.Parameter(torch.cat((orig_pos_emb, orig_pos_emb)))
-
 
     parameters = dict(
         lr = 1e-4,
@@ -320,8 +343,10 @@ if __name__ == "__main__":
         k=6,
     )
 
-
-    model = DNAVMM(d_enc, v_enc, d_tokenizer, processor, params=parameters)
+    model = DNAVMM(
+        cache_dir="/data/s4501888/hf/datasets",
+        params=parameters,
+    )
     model.to(device)
 
     model.fit(train_dataset, eval_dataset)
