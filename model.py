@@ -73,13 +73,15 @@ class DNAVMM(nn.Module):
         # Use mode with larger self-attention matrix
         self.enlargen_tokenizer()
 
+        # init parameters
         self.lr = params["lr"]
         self.n_classes = params["n_classes"]
         self.epochs = params["epochs"]
         self.steps_per_epoch = params["steps_per_epoch"]
         self.batch_size = params["batch_size"]
         self.k = params["k"]
-    
+        
+        # Hardcoded output sizes of DINOV2_small and DNABERT_6
         d_enc_size = 768
         v_enc_size = 384
 
@@ -97,7 +99,6 @@ class DNAVMM(nn.Module):
             
             nn.Linear(128, self.n_classes)
             )
-        self.dropout = nn.Dropout(0.1)
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         self.criterion = nn.CrossEntropyLoss()
@@ -136,7 +137,6 @@ class DNAVMM(nn.Module):
                 "labels": torch.tensor(labels).long().to(device),
                 "barcodes": barcodes}
    
-    # Untested, probably works
     def forward(self, images, dna):
         #v_embedding = self.visual_encoder(images).last_hidden_state.mean(dim=1)
         #d_embedding = self.dna_encoder(**dna).last_hidden_state.mean(dim=1)
@@ -148,99 +148,111 @@ class DNAVMM(nn.Module):
         feature_vec = torch.cat([v_embedding, d_embedding], dim=-1)
 
         # Pass through model.
-        feature_vec = self.dropout(feature_vec)
         logits = self.class_head(feature_vec)
 
         return logits
     
-    # Might not be possible in same class, check RL implementations
-    # Ideally, just doing model.train() will do it.
-    def fit(self, train_dataset, eval_dataset):
+    def fit(self, train_dataset):
+        """Fit the model on a shuffle of the dataset, once per epoch"""
         # Loop through each epoch
-        for epoch in range(self.epochs):
-            self.train() # Turn on dropouts
-            # Shuffle the dataset at the start for more variable data training
-            train_dataset = train_dataset.shuffle()
-            # Print the current epoch
-            print(f"Epoch {epoch+1}/{self.epochs}")
-            
-            prev = 0
-            train_loss = []
-            train_correct = 0
-            train_total = 0
+        self.train() # Turn on dropouts            
+        prev = 0
+        train_loss = []
+        train_correct = 0
+        train_total = 0
 
-            for timestep, idx in enumerate(range(self.batch_size, len(train_dataset), self.batch_size)):
-                self.optimizer.zero_grad() # Zero out previous grad
+        for timestep, idx in enumerate(range(self.batch_size, len(train_dataset), self.batch_size)):
+            self.optimizer.zero_grad() # Zero out previous grad
 
-                # Collate data properly
-                batch = self.collate_fn(train_dataset[prev:idx])
+            # Collate data properly
+            batch = self.collate_fn(train_dataset[prev:idx])
 
-                # Single out data
+            # Single out data
+            images = batch["images"]
+            labels = batch["labels"]
+            barcodes = batch["barcodes"]
+            tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True, truncation=True).to(device)
+
+            # Calculate loss
+            logits = self.forward(images=images, dna=tokenized_barcodes)
+            loss = self.criterion(logits, labels)
+
+            prediction = torch.argmax(logits, dim=1)
+            train_correct += (prediction == labels).sum().item()
+            train_total += labels.size(0)
+
+            # Backprop loss
+            loss.backward()
+            self.optimizer.step()
+                
+            # Save the loss to storage
+            train_loss.append(loss.item())
+            # Break training when steps are done
+            if timestep == self.steps_per_epoch - 1:
+                break
+                
+            # reset prev
+            prev = idx
+        return train_correct, train_total, train_loss
+
+    def evaluate(self, eval_dataset):
+        """Single evaluation run on dataset for each epoch"""
+        # Initialize prev and the train loss, and the training metrics
+        prev = 0
+        eval_loss = []
+        eval_prediction = 0
+        eval_total = 0
+
+        with torch.no_grad():  # Disable gradient computation for evaluation
+            for timestep, idx in enumerate(range(self.batch_size, len(eval_dataset), self.batch_size)):
+                # Collate the dataset to get the batches needed to evaluate the model
+                batch = self.collate_fn(eval_dataset[prev:idx])
+                        
+                # Get the images and labels from the current batch
                 images = batch["images"]
                 labels = batch["labels"]
                 barcodes = batch["barcodes"]
-                
-                # Tokenize each k-mer in the barcode
                 tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True, truncation=True).to(device)
+                
 
                 logits = self.forward(images=images, dna=tokenized_barcodes)
                 loss = self.criterion(logits, labels)
 
-                prediction = torch.argmax(logits, dim=1)
-                train_correct += (prediction == labels).sum().item()
-                train_total += labels.size(0)
+                # Save the loss
+                eval_loss.append(loss.item())
 
-                # Backprop loss
-                loss.backward()
-                self.optimizer.step()
-                
-                # Save the loss to storage
-                train_loss.append(loss.item())
-                # Break training when steps are done
+                # Compute metrics
+                prediction = torch.argmax(logits, dim=1)
+                eval_prediction += (prediction == labels).sum().item()
+                eval_total += labels.size(0)
+
+                # Break the loop when the set number of training steps are reached
                 if timestep == self.steps_per_epoch - 1:
                     break
-                
-                # reset prev
+                    
+                # Reset prev
                 prev = idx
+        return eval_prediction, eval_total, eval_loss
+    
+    # Might not be possible in same class, check RL implementations
+    # Ideally, just doing model.train() will do it.
+    def train_loop(self, train_dataset, eval_dataset):
+        # Loop through each epoch
+        for epoch in range(self.epochs):
+            
+            # Shuffle the dataset at the start for more variable data training
+            train_dataset = train_dataset.shuffle()
+            print(f"Epoch {epoch+1}/{self.epochs}")
 
+            # Fit model on current shuffle
+            train_correct, train_total, train_loss = self.fit(train_dataset=train_dataset)
             # Calculate accuracy for the training dataset
             train_accuracy = train_correct / train_total
             
             # Turn off dropouts
-            self.eval()
+            eval_prediction, eval_total, eval_loss = self.eval(eval_dataset=eval_dataset)
 
-            # Initialize prev and the train loss, and the training metrics
-            prev = 0
-            eval_loss = []
-            eval_prediction = 0
-            eval_total = 0
-
-            with torch.no_grad():  # Disable gradient computation for evaluation
-                for timestep, idx in enumerate(range(self.batch_size, len(eval_dataset), self.batch_size)):
-                    # Collate the dataset to get the batches needed to evaluate the model
-                    batch = self.collate_fn(eval_dataset[prev:idx])
-                        
-                    # Get the images and labels from the current batch
-                    images = batch["images"]
-                    labels = batch["labels"]
-
-                    logits = self.forward(images=images)
-                    loss = self.criterion(logits, labels)
-
-                    # Save the loss
-                    eval_loss.append(loss.item())
-
-                    # Compute metrics
-                    prediction = torch.argmax(logits, dim=1)
-                    eval_prediction += (prediction == labels).sum().item()
-                    eval_total += labels.size(0)
-
-                    # Break the loop when the set number of training steps are reached
-                    if timestep == self.steps_per_epoch - 1:
-                        break
-                    
-                    # Reset prev
-                    prev = idx
+            
 
             # Calculate accuracy for the validation dataset
             eval_accuracy = eval_prediction / eval_total
@@ -306,6 +318,8 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+    cache_dir = "/data/s4501888/hf/datasets"
+
     # Train dataset
     train_dataset = load_dataset(
         "dataset.py",
@@ -313,7 +327,7 @@ if __name__ == "__main__":
         split="train",
         trust_remote_code=True,
         token=apitoken,
-        # cache_dir="/data/s4501888/hf/datasets"
+        cache_dir=cache_dir
     )
     train_dataset = train_dataset.with_format("torch", device=device)
 
@@ -349,6 +363,6 @@ if __name__ == "__main__":
     )
     model.to(device)
 
-    model.fit(train_dataset, eval_dataset)
+    model.train_loop(train_dataset, eval_dataset)
     model.save("/local/mmeb_s4501888/model.weights")
 
