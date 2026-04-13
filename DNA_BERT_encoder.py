@@ -2,8 +2,8 @@ import torch
 import os
 import pandas as pd
 import numpy as np
+import time
 
-from time import time
 from transformers import AutoTokenizer
 from transformers import AutoModelForMaskedLM
 from transformers import AutoModel
@@ -18,7 +18,7 @@ from functools import partial
 from dotenv import load_dotenv
 
 load_dotenv()
-apitoken = os.getenv("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")
+apitoken = os.getenv("API_KEY")
 
 global device 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -57,7 +57,9 @@ class DNAEncoder(nn.Module):
 
         cls = outputs.last_hidden_state[:, 0, :]
         embedding = self.projection(cls)
-        embedding = nn.functional.normalize(embedding, dim=-1)
+
+        # Normalization (if nessesary)
+        # embedding = nn.functional.normalize(embedding, dim=-1) 
 
         return embedding
 
@@ -70,23 +72,49 @@ class DNAEncoder(nn.Module):
 
         return logits
 
+    def evaluate(self, eval_dataloader):
+        # Evaluation
+            self.eval() # Set model to evaluation mode
+            eval_loss = []
+            correct_predictions = 0
+            total_predictions = 0
+            with torch.no_grad(): # No gradient calculation (faster and less memory)
+                for batch in eval_dataloader:
+                    input_ids = batch["input_ids"].to(device)
+                    attention_mask = batch["attention_mask"].to(device)
+                    labels = batch["labels"].to(device)
+
+                    logits = self.forward(input_ids, attention_mask)
+                    loss = self.criterion(logits, labels)
+
+                    eval_loss.append(loss.item())
+
+                    predictions = torch.argmax(logits, dim=1)
+                    correct_predictions += (predictions == labels).sum().item()
+                    total_predictions += labels.size(0)
+
+            # Calculate and append Metrics
+            avg_eval_loss = sum(eval_loss) / len(eval_loss)
+            accuracy = correct_predictions / total_predictions
+            
+            return accuracy, avg_eval_loss
     
     def fit(self, dataloader, eval_dataloader, epochs, device, optimizer):
-        """Custom training loop"""
+        """Custom training loop for fine-tuning"""
         metrics = {"train_loss": [], "eval_loss": [], "accuracy": []}
+        best_acc = 0
         for epoch in range(epochs):
             self.train() # Enable dropout
-            train_loss = 0
+            train_loss = []
 
             for batch in dataloader: 
+                # Reset gradients 
+                optimizer.zero_grad() 
 
                 # Get input_ids, attention_mask and labels from batch
                 input_ids = batch["input_ids"].to(device)
                 attention_mask = batch["attention_mask"].to(device)
                 labels = batch["labels"].to(device)
-
-                # Reset gradients 
-                optimizer.zero_grad() 
 
                 # Create logits and calculate loss value
                 logits = self.forward(input_ids, attention_mask)
@@ -102,46 +130,28 @@ class DNAEncoder(nn.Module):
                 optimizer.step()
 
                 # Track loss
-                train_loss += loss.item()
+                train_loss.append(loss.item())
 
-            avg_train_loss = train_loss / len(dataloader)
+            avg_train_loss = sum(train_loss) / len(train_loss)
             metrics["train_loss"].append(avg_train_loss)
 
-            # Evaluation
-            self.eval()
-            eval_loss = 0
-            correct = 0
-            total = 0
-            with torch.no_grad(): # No gradient calculation (faster and less memory)
-                for batch in eval_dataloader:
-                    input_ids = batch["input_ids"].to(device)
-                    attention_mask = batch["attention_mask"].to(device)
-                    labels = batch["labels"].to(device)
-
-                    logits = self.forward(input_ids, attention_mask)
-                    loss = self.criterion(logits, labels)
-
-                    eval_loss += loss.item()
-
-                    predictions = torch.argmax(logits, dim=1)
-                    correct += (predictions == labels).sum().item()
-                    total += labels.size(0)
-
-            # Calculate and append Metrics
-            avg_eval_loss = eval_loss / len(eval_dataloader)
-            accuracy = correct / total
+            accuracy, avg_eval_loss = self.evaluate(eval_dataloader)
+            if accuracy > best_acc:
+                best_acc = accuracy
+                torch.save(self.state_dict(), "best_model.pt")
             metrics["eval_loss"].append(avg_eval_loss)
             metrics["accuracy"].append(accuracy)
             print(f"Concluded epoch: {epoch}")
+            
         return metrics
     
-    def save(self, path):
-        np.save("train_log.npy", self.train_loss)
-        torch.save(self.state_dict(), path)
+    def save(self, metrics, path):
+       np.save("train_log.npy", metrics)
+       torch.save(self.state_dict(), path)
     
 
     def load(self, path):
-        self.load_state_dict(torch.load(path))
+        self.load_state_dict(torch.load(path, map_location=device))
         
     
 def collate(batch, tokenizer, species_dict, k=3, max_length=512):
@@ -207,10 +217,13 @@ def training_loop():
 
     # Initialize the species labels for unique species classes
     global species_dict
-    uniq_species = set(train_dataset["species"])
-    n_classes = len(uniq_species)
-    species_dict = {entry: i for i, entry in enumerate(uniq_species)}
-    print("Get unique species")
+    uniq_species_train = set(train_dataset["species"])
+    uniq_species_eval = set(eval_dataset["species"])
+    uniq_species_total = uniq_species_train.union(uniq_species_eval)
+    
+    n_classes = len(uniq_species_total)
+    species_dict = {entry: i for i, entry in enumerate(uniq_species_total)}
+    print("Species dictionary created, including unknown class")
 
     # Initialize the DNA Encoder model
     model = DNAEncoder(model_name=model_handle, num_classes=n_classes)
@@ -225,16 +238,18 @@ def training_loop():
     print("Datasets collated")
 
     # Train the model
-    print("Evaluating model...")
+    print("Training model...")
     metrics = model.fit(train_dataloader, eval_dataloader, epochs=3, device=device, optimizer=optimizer)
-    print("Model evaluated:")
+    print("Model Trained:")
+    
     print(metrics)
 
     # Save model weights for later
-    filepath = f"model_weights{time.strftime("%Y%m%d")}.weights"
-    model.save(filepath)
+    filepath = f"model_weights{time.strftime('%Y%m%d')}.weights"
+    model.save(metrics, filepath)
     print(f"Model weights saved to {filepath}")
 
 if __name__ == "__main__":
     training_loop()
+
 
