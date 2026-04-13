@@ -61,6 +61,8 @@ class VisualEncoder(nn.Module):
         # Obtain the CLS for embedding
         outputs = self.visual_encoder(pixel_values=images)
         embedding = outputs.last_hidden_state[:, 0]
+        # Mean pooling
+        #embedding = outputs.last_hidden_state.mean(dim=1)
 
         # Pass the embedding through the model
         embedding = self.dropout(embedding)
@@ -195,8 +197,17 @@ class VisualEncoder(nn.Module):
         fig.savefig(f"{save_path}_accuracy.png")
   
     def save(self, path):
-        np.save("train_log.npy", self.train_loss)
+        # Save the weights
         torch.save(self.state_dict(), path)
+
+        # Save the metrics in one file
+        metrics = {"train_loss": self.train_loss,
+                   "train_acc": self.train_acc,
+                   "eval_loss" : self.eval_loss,
+                   "eval_acc": self.eval_acc,
+                   "epochs": self.epochs
+        }
+        np.save(path + "_cls_species.npy", metrics)
     
     def load(self, path):
         self.load_state_dict(torch.load(path))
@@ -213,7 +224,7 @@ def collate(batch):
         labels: The stacked tensor of the corresponding labels of the batch of images.
     """
     images = batch["image"]
-    labels = [species_dict[i] for i in batch["genus"]]
+    labels = [species_dict[i] for i in batch["species"]]
 
     # Use the model AutoImageProcessor to process the images for a better representation
     inputs = processor(images=images, return_tensors="pt")
@@ -249,15 +260,15 @@ if __name__ == "__main__":
     eval_dataset = eval_dataset.with_format("torch", device=device)
 
     # Initialize the species labels for the unique species classes
-    uniq_species = set(train_dataset["genus"])
+    uniq_species = set(train_dataset["species"])
     n_classes = len(uniq_species)
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
 
     # Initialize the parameters used for the model
     parameters = dict(
         lr = 5e-5,
-        epochs=5,
-        steps_per_epoch=5,
+        epochs=200,
+        steps_per_epoch=200,
         batch_size=32,
         n_classes=n_classes
     )
