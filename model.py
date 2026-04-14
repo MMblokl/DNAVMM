@@ -75,7 +75,12 @@ class DNAVMM(nn.Module):
 
         # init parameters
         self.lr = params["lr"]
-        self.n_classes = params["n_classes"]
+
+        self.class_values = params["class_values"]
+        self.class_mapping = params["class_mapping"]
+        self.epoch_ordering = params["epoch_ordering"]
+        self.layer_freezing = params["layer_freezing"]
+
         self.epochs = params["epochs"]
         self.steps_per_epoch = params["steps_per_epoch"]
         self.batch_size = params["batch_size"]
@@ -97,7 +102,7 @@ class DNAVMM(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.2),
             
-            nn.Linear(128, self.n_classes)
+            nn.Linear(128, self.class_values["class"])
             )
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
@@ -130,7 +135,7 @@ class DNAVMM(nn.Module):
         """
         images = batch["image"]
         images = self.i_processor(images=images, return_tensors="pt")
-        labels = [species_dict[i] for i in batch["species"]]
+        labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
         barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
         
         return {"images": images,
@@ -234,40 +239,83 @@ class DNAVMM(nn.Module):
                 prev = idx
         return eval_prediction, eval_total, eval_loss
     
-    # Might not be possible in same class, check RL implementations
-    # Ideally, just doing model.train() will do it.
+    def freeze_until(self, model, until):
+        """Freezes weights of given model given the value. If until=1, first 2 layers are frozen."""
+        for i, layer in enumerate(model.encoder.layer):
+            # If the index is withing the to be frozen layers
+            if i <= until:
+                for param in layer.parameters():
+                    param.required_grad = False
+
     def train_loop(self, train_dataset, eval_dataset):
-        # Loop through each epoch
-        for epoch in range(self.epochs):
+        # Loop through class label types
+        for labeltype in self.class_values.keys():
+            # Current type of class/label
+            self.labeltype = labeltype
+            epochs = self.epoch_ordering[labeltype]
             
-            # Shuffle the dataset at the start for more variable data training
-            train_dataset = train_dataset.shuffle()
-            print(f"Epoch {epoch+1}/{self.epochs}")
+            until = self.layer_freezing[self.labeltype]
+            # Model freezing and head replacement scheduling here
+            if until:
+                # Freeze the bottom n layers of both encoder
+                self.freeze_until(self.dna_encoder, until)
+                self.freeze_until(self.visual_encoder, until)
 
-            # Fit model on current shuffle
-            train_correct, train_total, train_loss = self.fit(train_dataset=train_dataset)
-            # Calculate accuracy for the training dataset
-            train_accuracy = train_correct / train_total
-            
-            # Save and print the metrics for the current epoch
-            self.train_loss[epoch, :] = np.array(train_loss)
-            self.train_acc[epoch] = np.array(train_accuracy)
-            print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
-            print("Training accuracy:", train_accuracy)
+                # Make sure optim only optimizes on non-frozen weights
+                trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+                self.optimizer = torch.optim.Adam(trainable_params, lr=self.lr)
 
-            # Valiation
-            # eval_prediction, eval_total, eval_loss = self.eval(eval_dataset=eval_dataset)
-            # Calculate accuracy for the validation dataset
-            # eval_accuracy = eval_prediction / eval_total
+            # Replace final class head layer with a new output layer matching the number of classes
+            self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype])
 
-            # self.eval_loss[epoch, :] = np.array(eval_loss)
-            # self.eval_acc[epoch] = np.array(eval_accuracy)
-            # print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
-            # print("Validation accuracy: ", eval_accuracy)
-        
-        # Print the training and evaluation loss log
+            # Epoch loop
+            for epoch in range(epochs):
+                # Shuffle dataset
+                train_dataset = train_dataset.shuffle()
+                print(f"Epoch {epoch+1}/{epochs} for {labeltype}.")
+
+                # Train on the dataset for the entire epoch
+                train_correct, train_total, train_loss = self.fit(train_dataset=train_dataset)
+
+                train_accuracy = train_correct / train_total
+                # Save and print the metrics for the current epoch
+                self.train_loss[epoch, :] = np.array(train_loss)
+                self.train_acc[epoch] = np.array(train_accuracy)
+                print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
+                print("Training accuracy:", train_accuracy)
+
         print("Training loss log: ", self.train_loss.mean(axis=1)[:-1])
-        # print("Validation loss log: ", self.eval_loss.mean(axis=1)[:-1])
+
+        # for epoch in range(self.epochs):
+            
+        #     # Shuffle the dataset at the start for more variable data training
+        #     train_dataset = train_dataset.shuffle()
+        #     print(f"Epoch {epoch+1}/{self.epochs}")
+
+        #     # Fit model on current shuffle
+        #     train_correct, train_total, train_loss = self.fit(train_dataset=train_dataset)
+        #     # Calculate accuracy for the training dataset
+        #     train_accuracy = train_correct / train_total
+            
+        #     # Save and print the metrics for the current epoch
+        #     self.train_loss[epoch, :] = np.array(train_loss)
+        #     self.train_acc[epoch] = np.array(train_accuracy)
+        #     print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
+        #     print("Training accuracy:", train_accuracy)
+
+        #     # Valiation
+        #     # eval_prediction, eval_total, eval_loss = self.evaluate(eval_dataset=eval_dataset)
+        #     # Calculate accuracy for the validation dataset
+        #     # eval_accuracy = eval_prediction / eval_total
+
+        #     # self.eval_loss[epoch, :] = np.array(eval_loss)
+        #     # self.eval_acc[epoch] = np.array(eval_accuracy)
+        #     # print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
+        #     # print("Validation accuracy: ", eval_accuracy)
+        
+        # # Print the training and evaluation loss log
+        # print("Training loss log: ", self.train_loss.mean(axis=1)[:-1])
+        # # print("Validation loss log: ", self.eval_loss.mean(axis=1)[:-1])
 
     def plot_metrics(self, save_path):
         # Set the number of epochs used for the plots
@@ -340,18 +388,59 @@ if __name__ == "__main__":
     eval_dataset = eval_dataset.with_format("torch", device=device)
 
     # Initialize every single species as a valuen integer
-    uniq_species_train = set(train_dataset["species"])
-    uniq_species_eval = set(train_dataset["species"])
-    uniq_species = set.union(uniq_species_eval, uniq_species_train)
-    n_classes = len(uniq_species)
-    species_dict = {entry: i for i, entry in enumerate(uniq_species)}
+    uniq_classes = set.union(set(train_dataset["class"]), set(train_dataset["class"]))
+    class_dict = {entry: i for i, entry in enumerate(uniq_classes)}
+    n_class = len(uniq_classes)
 
+    uniq_orders = set.union(set(train_dataset["order"]), set(eval_dataset["order"]))
+    order_dict = {entry: i for i, entry in enumerate(uniq_orders)}
+    n_orders = len(uniq_orders)
+
+    uniq_families = set.union(set(train_dataset["family"]), set(eval_dataset["family"]))
+    family_dict = {entry: i for i, entry in enumerate(uniq_families)}
+    n_family = len(uniq_families)
+
+    uniq_genus = set.union(set(train_dataset["genus"]), set(eval_dataset["genus"]))
+    genus_dict = {entry: i for i, entry in enumerate(uniq_genus)}
+    n_genus = len(uniq_genus)
+
+    uniq_species = set.union(set(train_dataset["species"]), set(train_dataset["species"]))
+    species_dict = {entry: i for i, entry in enumerate(uniq_species)}
+    n_species = len(uniq_species)
+    
     parameters = dict(
         lr = 1e-4,
         epochs=200,
         steps_per_epoch=200,
         batch_size=4,
-        n_classes=n_classes,
+        class_values = {
+            "class": n_class,
+            "order": n_orders,
+            "family":n_family,
+            "genus": n_genus,
+            "species": n_species,
+            },
+        class_mapping = {
+            "class": class_dict,
+            "order": order_dict,
+            "family": family_dict,
+            "genus": genus_dict,
+            "species": species_dict,
+            },
+        epoch_ordering = {
+            "class": 2,
+            "order": 3,
+            "family": 10,
+            "genus": 20,
+            "species": 200
+            }, # Number of epochs for each step.
+        layer_freezing = {
+            "class": None,
+            "order": 1,
+            "family": 5,
+            "genus": 8,
+            "species": 10,
+            },
         k=6,
     )
 
@@ -360,7 +449,6 @@ if __name__ == "__main__":
         params=parameters,
     )
     model.to(device)
-    breakpoint()
     model.train_loop(train_dataset, eval_dataset)
     model.save("/local/mmeb_s4501888/model.weights")
 
