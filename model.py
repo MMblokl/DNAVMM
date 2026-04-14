@@ -69,7 +69,7 @@ class DNAVMM(nn.Module):
                 i_processor,
                 token=apitoken,
             )
-
+        
         # Use mode with larger self-attention matrix
         self.enlargen_tokenizer()
 
@@ -81,10 +81,11 @@ class DNAVMM(nn.Module):
         self.epoch_ordering = params["epoch_ordering"]
         self.layer_freezing = params["layer_freezing"]
 
-        self.epochs = params["epochs"]
         self.steps_per_epoch = params["steps_per_epoch"]
         self.batch_size = params["batch_size"]
         self.k = params["k"]
+
+        total_epochs = sum(self.epoch_ordering.values())
         
         # Hardcoded output sizes of DINOV2_small and DNABERT_6
         d_enc_size = 768
@@ -109,10 +110,10 @@ class DNAVMM(nn.Module):
         self.criterion = nn.CrossEntropyLoss()
 
         # Training metrics storage
-        self.train_loss = np.zeros(shape=[self.epochs + 1, self.steps_per_epoch])
-        self.eval_loss = np.zeros(shape=[self.epochs + 1, self.steps_per_epoch])
-        self.train_acc = np.zeros(self.epochs)
-        self.eval_acc = np.zeros(self.epochs)
+        self.train_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
+        self.eval_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
+        self.train_acc = np.zeros(total_epochs)
+        self.eval_acc = np.zeros(total_epochs)
 
     def enlargen_tokenizer(self):
         # Double size of the model for 1024 input size of DNA
@@ -134,7 +135,7 @@ class DNAVMM(nn.Module):
             torch.tensor: The stacked tensor of the batch of images.
         """
         images = batch["image"]
-        images = self.i_processor(images=images, return_tensors="pt")
+        images = self.i_processor(images=images, return_tensors="pt").to(device)
         labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
         barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
         
@@ -247,26 +248,29 @@ class DNAVMM(nn.Module):
                 for param in layer.parameters():
                     param.required_grad = False
 
+    def update_optimizer(self):
+        """Updates optimizer to only use trainable model params"""
+        trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+        self.optimizer = torch.optim.Adam(trainable_params, lr=self.lr)
+
     def train_loop(self, train_dataset, eval_dataset):
         # Loop through class label types
         for labeltype in self.class_values.keys():
             # Current type of class/label
             self.labeltype = labeltype
-            epochs = self.epoch_ordering[labeltype]
+            epochs = self.epoch_ordering[labeltype] # Get number of epochs for the label
             
-            until = self.layer_freezing[self.labeltype]
-            # Model freezing and head replacement scheduling here
-            if until:
+            until = self.layer_freezing[self.labeltype] # How many layers to freeze
+            if until: # If None, no freeze.
                 # Freeze the bottom n layers of both encoder
                 self.freeze_until(self.dna_encoder, until)
                 self.freeze_until(self.visual_encoder, until)
 
                 # Make sure optim only optimizes on non-frozen weights
-                trainable_params = filter(lambda p: p.requires_grad, model.parameters())
-                self.optimizer = torch.optim.Adam(trainable_params, lr=self.lr)
+                self.update_optimizer()
 
             # Replace final class head layer with a new output layer matching the number of classes
-            self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype])
+            self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
 
             # Epoch loop
             for epoch in range(epochs):
@@ -373,7 +377,7 @@ if __name__ == "__main__":
         split="train",
         trust_remote_code=True,
         token=apitoken,
-        # cache_dir=cache_dir
+        cache_dir=cache_dir
     )
     train_dataset = train_dataset.with_format("torch", device=device)
 
@@ -383,7 +387,7 @@ if __name__ == "__main__":
                                 split="validation", 
                                 trust_remote_code=True,
                                 token=apitoken,
-                                # cache_dir="/data/s4514998/hf/datasets"
+                                cache_dir=cache_dir
     )
     eval_dataset = eval_dataset.with_format("torch", device=device)
 
@@ -408,9 +412,9 @@ if __name__ == "__main__":
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
     n_species = len(uniq_species)
     
+    # For singlestage, add only species, and only those values for each other param.
     parameters = dict(
         lr = 5e-5,
-        epochs=200,
         steps_per_epoch=200,
         batch_size=4,
         class_values = {
@@ -437,18 +441,39 @@ if __name__ == "__main__":
         layer_freezing = {
             "class": None,
             "order": 1,
-            "family": 5,
-            "genus": 8,
-            "species": 10,
+            "family": 4,
+            "genus": 5,
+            "species": 9,
             },
         k=6,
     )
+    
+    # Uncomment to enable SINGLE level
+    # parameters = dict(
+    #     lr = 5e-5,
+    #     steps_per_epoch=200,
+    #     batch_size=4,
+    #     class_values = {
+    #         "species": n_species,
+    #         },
+    #     class_mapping = {
+    #         "species": species_dict,
+    #         },
+    #     epoch_ordering = {
+    #         "species": 200
+    #         }, # Number of epochs for each step.
+    #     layer_freezing = {
+    #         "species": None,
+    #         },
+    #     k=6,
+    # )
+
 
     model = DNAVMM(
-        # cache_dir="/data/s4501888/hf/datasets",
+        cache_dir=cache_dir,
         params=parameters,
     )
-    model.to(device)
+    model = model.to(device)
     model.train_loop(train_dataset, eval_dataset)
     model.save("/local/mmeb_s4501888/model.weights")
 
