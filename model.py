@@ -409,7 +409,7 @@ if __name__ == "__main__":
     n_species = len(uniq_species)
     
     parameters = dict(
-        lr = 1e-4,
+        lr = 5e-5,
         epochs=200,
         steps_per_epoch=200,
         batch_size=4,
