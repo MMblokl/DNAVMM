@@ -249,27 +249,25 @@ class DNAVMM(nn.Module):
             # Calculate accuracy for the training dataset
             train_accuracy = train_correct / train_total
             
-            # Turn off dropouts
-            eval_prediction, eval_total, eval_loss = self.eval(eval_dataset=eval_dataset)
-
-            
-
-            # Calculate accuracy for the validation dataset
-            eval_accuracy = eval_prediction / eval_total
-
             # Save and print the metrics for the current epoch
             self.train_loss[epoch, :] = np.array(train_loss)
             self.train_acc[epoch] = np.array(train_accuracy)
-            self.eval_loss[epoch, :] = np.array(eval_loss)
-            self.eval_acc[epoch] = np.array(eval_accuracy)
             print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
             print("Training accuracy:", train_accuracy)
-            print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
-            print("Validation accuracy: ", eval_accuracy)
+
+            # Valiation
+            # eval_prediction, eval_total, eval_loss = self.eval(eval_dataset=eval_dataset)
+            # Calculate accuracy for the validation dataset
+            # eval_accuracy = eval_prediction / eval_total
+
+            # self.eval_loss[epoch, :] = np.array(eval_loss)
+            # self.eval_acc[epoch] = np.array(eval_accuracy)
+            # print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
+            # print("Validation accuracy: ", eval_accuracy)
         
         # Print the training and evaluation loss log
         print("Training loss log: ", self.train_loss.mean(axis=1)[:-1])
-        print("Validation loss log: ", self.eval_loss.mean(axis=1)[:-1])
+        # print("Validation loss log: ", self.eval_loss.mean(axis=1)[:-1])
 
     def plot_metrics(self, save_path):
         # Set the number of epochs used for the plots
@@ -327,7 +325,7 @@ if __name__ == "__main__":
         split="train",
         trust_remote_code=True,
         token=apitoken,
-        cache_dir=cache_dir
+        # cache_dir=cache_dir
     )
     train_dataset = train_dataset.with_format("torch", device=device)
 
@@ -358,11 +356,11 @@ if __name__ == "__main__":
     )
 
     model = DNAVMM(
-        cache_dir="/data/s4501888/hf/datasets",
+        # cache_dir="/data/s4501888/hf/datasets",
         params=parameters,
     )
     model.to(device)
-
+    breakpoint()
     model.train_loop(train_dataset, eval_dataset)
     model.save("/local/mmeb_s4501888/model.weights")
 
