@@ -103,7 +103,7 @@ class DNAVMM(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.2),
             
-            nn.Linear(128, self.class_values["class"])
+            nn.Linear(128, [i for i in self.class_values.values()][0])
             )
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
@@ -350,7 +350,8 @@ class DNAVMM(nn.Module):
                    "train_acc": self.train_acc,
                    "eval_loss" : self.eval_loss,
                    "eval_acc": self.eval_acc,
-                   "epochs": self.epochs
+                   "epochs": [i for i in self.epoch_ordering.values()],
+                   "frozen_until": [i for i in self.layer_freezing.values()]
         }
         np.save(path + "_cls_species.npy", metrics)
     
@@ -377,7 +378,7 @@ if __name__ == "__main__":
         split="train",
         trust_remote_code=True,
         token=apitoken,
-        cache_dir=cache_dir
+        # cache_dir=cache_dir
     )
     train_dataset = train_dataset.with_format("torch", device=device)
 
@@ -387,7 +388,7 @@ if __name__ == "__main__":
                                 split="validation", 
                                 trust_remote_code=True,
                                 token=apitoken,
-                                cache_dir=cache_dir
+                                # cache_dir=cache_dir
     )
     eval_dataset = eval_dataset.with_format("torch", device=device)
 
@@ -433,9 +434,9 @@ if __name__ == "__main__":
             },
         epoch_ordering = {
             "class": 2,
-            "order": 3,
-            "family": 10,
-            "genus": 20,
+            "order": 4,
+            "family": 25,
+            "genus": 50,
             "species": 200
             }, # Number of epochs for each step.
         layer_freezing = {
@@ -468,9 +469,8 @@ if __name__ == "__main__":
     #     k=6,
     # )
 
-
     model = DNAVMM(
-        cache_dir=cache_dir,
+        # cache_dir=cache_dir,
         params=parameters,
     )
     model = model.to(device)
