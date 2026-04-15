@@ -1,7 +1,6 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
-from torch.utils.data import DataLoader
 from transformers import AutoModel, AutoTokenizer, set_seed, AutoImageProcessor
 from datasets import load_dataset
 import numpy as np
