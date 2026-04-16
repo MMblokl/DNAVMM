@@ -16,26 +16,57 @@ apitoken =os.getenv("API_KEY")
 global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Initialize the Encoder image processor
-processor = AutoImageProcessor.from_pretrained('facebook/dinov2-small',
-                                               cache_dir="/data/s4514998/hf/datasets")
-
 class VisualEncoder(nn.Module):
-    def __init__(self, visual_encoder, params):
+    def __init__(self, 
+                 params: dict,
+                v_enc: str = "facebook/dinov2-small",
+                i_processor: str = "facebook/dinov2-small",
+                cache_dir: str | bool = False
+                ):
         super(VisualEncoder, self).__init__()
-        self.visual_encoder = visual_encoder
-        visual_encoder_size = 384 # Size visual encoder
+        # Determine wheter to use the pre-defined cache directory for the parameters and data
+        if cache_dir:
+            self.visual_encoder = AutoModel.from_pretrained(
+                v_enc,
+                token=apitoken,
+                cache_dir=cache_dir
+            )
+            self.i_processor = AutoImageProcessor.from_pretrained(
+                i_processor,
+                token=apitoken,
+                cache_dir=cache_dir
+            )
 
-        # Set the Model parameters
+        else:
+            self.visual_encoder = AutoModel.from_pretrained(
+                v_enc,
+                token=apitoken
+            )
+            self.i_processor = AutoImageProcessor.from_pretrained(
+                i_processor,
+                token=apitoken
+            )
+
+        # Initialize the parameters
         self.lr = params["lr"]
-        self.n_classes = params["n_classes"]
-        self.epochs = params["epochs"]
+
+        self.class_values = params["class_values"]
+        self.class_mapping = params["class_mapping"]
+        self.epoch_ordering = params["epoch_ordering"]
+        self.layer_freezing = params["layer_freezing"]
+
         self.steps_per_epoch = params["steps_per_epoch"]
         self.batch_size = params["batch_size"]
 
+        # Initialize the total epochs
+        total_epochs = sum(self.epoch_ordering.values())
+
+        # Initialize the hardcoded output size of DINOV2_small
+        v_enc_size = 384
+
         # Set the Fully connected classification head
         self.class_head = nn.Sequential(
-            nn.Linear(visual_encoder_size, 256),
+            nn.Linear(v_enc_size, 256),
             nn.LayerNorm(256),
             nn.ReLU(),
             nn.Dropout(0.2),
@@ -45,136 +76,182 @@ class VisualEncoder(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.2),
             
-            nn.Linear(128, self.n_classes)
+            nn.Linear(128, [i for i in self.class_values.values()][0])
             )
-        self.dropout = nn.Dropout(0.1) # Dropout layer
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr) # Adam optimizer
-        self.criterion = nn.CrossEntropyLoss() # Loss function for classification
+        
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        self.criterion = nn.CrossEntropyLoss()
 
         # Save the model metrics
-        self.train_loss = np.zeros(shape=[self.epochs + 1, self.steps_per_epoch])
-        self.eval_loss = np.zeros(shape=[self.epochs + 1, self.steps_per_epoch])
-        self.train_acc = np.zeros(self.epochs)
-        self.eval_acc = np.zeros(self.epochs)
+        self.train_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
+        self.eval_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
+        self.train_acc = np.zeros(total_epochs)
+        self.eval_acc = np.zeros(total_epochs)
 
+    def collate_fn(self, batch):
+        """Custom collation function for the dataset, extract images from the batch and process them with the AutoImageProcessor.
+
+        Args:
+            batch(dict): The batch containing the data subset
+
+        Returns:
+            torch.tensor: The stacked tensor of the batch of images.
+            labels: The stacked tensor of the corresponding labels of the batch of images.
+        """
+        images = batch["image"]
+        images = self.i_processor(images=images, return_tensors="pt").to(device)
+        labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
+        
+        return {"images": images,
+                "labels": torch.tensor(labels).long().to(device)}
+    
     def forward(self, images):
-        # Obtain the CLS for embedding
-        outputs = self.visual_encoder(pixel_values=images)
-        embedding = outputs.last_hidden_state[:, 0]
-        # Mean pooling
-        #embedding = outputs.last_hidden_state.mean(dim=1)
+        # CLS for embedding
+        embedding = self.visual_encoder(**images).last_hidden_state[:,0]
+
+        # Mean pooling for embedding
+        #embedding = self.visual_encoder(**images).last_hidden_state.mean(dim=1)
 
         # Pass the embedding through the model
-        embedding = self.dropout(embedding)
         logits = self.class_head(embedding)
 
         return logits
 
-    def fit(self, train_dataset, eval_dataset):
-        # Loop through the epochs to train the model
-        for epoch in range(self.epochs):
-            # Print the current epoch
-            print(f"Epoch {epoch+1}/{self.epochs}")
+    def fit(self, train_dataset):
+        """Fit the model on a shuffled batch of the dataset"""
+        self.train() # Turn on the dropouts
+        prev = 0   # Previous index of the dataset
+        train_loss = [] # List for the training loss
+        train_correct = 0 # The number of correct predictions
+        train_total = 0 # Total number of training labels
 
-            # Set the model to train mode
-            self.train()
+        for timestep, idx in enumerate(range(self.batch_size, len(train_dataset), self.batch_size)):
+            self.optimizer.zero_grad() # Zero out previous grad
 
-            # Shuffle the dataset at the start for more variable data training
-            train_dataset = train_dataset.shuffle()
+            # Collate the dataset to get the batches needed to train the model
+            batch = self.collate_fn(train_dataset[prev:idx])
 
-            # Initialize prev and the train loss, and the training metrics
-            prev = 0
-            train_loss = []
-            train_correct = 0
-            train_total = 0
+            # Get the images and labels from the current batch
+            images = batch["images"]
+            labels = batch["labels"]
 
-            for timestep, idx in enumerate(range(self.batch_size, len(train_dataset), self.batch_size)):
-                self.optimizer.zero_grad() # Reset the gradients
+            # Calculate the loss
+            logits = self.forward(images=images)
+            loss = self.criterion(logits, labels)
 
-                # Collate the dataset to get the batches needed to train the model
-                batch = collate(train_dataset[prev:idx])
-                    
+
+            # Compute the training metrics
+            prediction = torch.argmax(logits, dim=1)
+            train_correct += (prediction == labels).sum().item()
+            train_total += labels.size(0)
+
+            # Backward pass
+            loss.backward() 
+            self.optimizer.step()
+
+            # Save the loss
+            train_loss.append(loss.item())
+
+            # Break the training loop when the set number of training steps are reached
+            if timestep == self.steps_per_epoch - 1:
+                break
+                
+            # Reset the previous index of the dataset
+            prev = idx
+
+        return train_correct, train_total, train_loss
+    
+
+    def evaluate(self, eval_dataset):
+        """Single evaluation run on the validation dataset for each epoch."""
+        self.eval() # Turn off the dropouts
+        prev = 0   # Previous index of the dataset
+        eval_loss = [] # List for the validation loss
+        eval_correct = 0 # The number of correct predictions
+        eval_total = 0 # Total number of validation labels
+  
+        with torch.no_grad():  # Disable gradient computation for evaluation
+            for timestep, idx in enumerate(range(self.batch_size, len(eval_dataset), self.batch_size)):
+
+                # Collate the dataset to get the batches needed to evaluate the model
+                batch = self.collate_fn(train_dataset[prev:idx])
+
                 # Get the images and labels from the current batch
                 images = batch["images"]
                 labels = batch["labels"]
 
+                # Calculate the loss
                 logits = self.forward(images=images)
                 loss = self.criterion(logits, labels)
 
-                # Compute the training metrics
+                # Compute the validation metrics
                 prediction = torch.argmax(logits, dim=1)
-                train_correct += (prediction == labels).sum().item()
-                train_total += labels.size(0)
-
-                # Backward pass
-                loss.backward() 
-                self.optimizer.step()
+                eval_correct += (prediction == labels).sum().item()
+                eval_total += labels.size(0)
 
                 # Save the loss
-                train_loss.append(loss.item())
+                eval_loss.append(loss.item())
 
-                # Break the training loop when the set number of training steps are reached
+                # Break the validation loop when the set number of training steps are reached
                 if timestep == self.steps_per_epoch - 1:
                     break
-                
-                # Reset prev
+                    
+                # Reset the previous index of the dataset
                 prev = idx
 
-            # Calculate accuracy for the training dataset
-            train_accuracy = train_correct / train_total
+        return eval_correct, eval_total, eval_loss
 
-            # Set the model to evaluation mode
-            self.eval()
+    def freeze_until(self, model, until):
+        """Freezes the weights of a given model according to the given the value. If until=1, first 2 layers are frozen."""
+        for i, layer in enumerate(model.encoder.layer):
+            # If the index is with in the to be frozen layers
+            if i <= until:
+                for param in layer.parameters():
+                    param.required_grad = False
 
-            # Initialize prev and the train loss, and the training metrics
-            prev = 0
-            eval_loss = []
-            eval_prediction = 0
-            eval_total = 0
+    def update_optimizer(self):
+        """Updates the optimizer to only use the trainable model params"""
+        trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+        self.optimizer = torch.optim.Adam(trainable_params, lr=self.lr)
 
-            with torch.no_grad():  # Disable gradient computation for evaluation
-                for timestep, idx in enumerate(range(self.batch_size, len(eval_dataset), self.batch_size)):
-                    # Collate the dataset to get the batches needed to evaluate the model
-                    batch = collate(eval_dataset[prev:idx])
-                        
-                    # Get the images and labels from the current batch
-                    images = batch["images"]
-                    labels = batch["labels"]
+    def train_loop(self, train_dataset, eval_dataset):
+        """Loop through the class and label types"""
+        for labeltype in self.class_values.keys():
+            self.labeltype = labeltype # Set the current label type
+            epochs = self.epoch_ordering[labeltype] # Get the number of epochs for the label
+            
+            until = self.layer_freezing[self.labeltype] # How many layers to freeze
+            if until: # If None, no freeze.
+                # Freeze the bottom n layers
+                self.freeze_until(self.visual_encoder, until)
 
-                    logits = self.forward(images=images)
-                    loss = self.criterion(logits, labels)
+                # Set the optimizer to only optimise on non-frozen weights
+                self.update_optimizer()
 
-                    # Save the loss
-                    eval_loss.append(loss.item())
 
-                    # Compute metrics
-                    prediction = torch.argmax(logits, dim=1)
-                    eval_prediction += (prediction == labels).sum().item()
-                    eval_total += labels.size(0)
+            # Replace the final class head layer with a new output layer that matches the number of classes
+            self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
 
-                    # Break the loop when the set number of training steps are reached
-                    if timestep == self.steps_per_epoch - 1:
-                        break
-                    
-                    # Reset prev
-                    prev = idx
+            # Epoch loop
+            for epoch in range(epochs):
+                # Shuffle the training dataset
+                train_dataset = train_dataset.shuffle()
+                print(f"Epoch {epoch+1}/{epochs} for {labeltype}.")
 
-            # Calculate accuracy for the validation dataset
-            eval_accuracy = eval_prediction / eval_total
+                # Train on the dataset for an entire epoch
+                train_correct, train_total, train_loss = self.fit(train_dataset=train_dataset)
 
-            # Save and print the metrics for the current epoch
-            self.train_loss[epoch, :] = np.array(train_loss)
-            self.train_acc[epoch] = np.array(train_accuracy)
-            self.eval_loss[epoch, :] = np.array(eval_loss)
-            self.eval_acc[epoch] = np.array(eval_accuracy)
-            print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
-            print("Training accuracy:", train_accuracy)
-            print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
-            print("Validation accuracy: ", eval_accuracy)
-        
-        # Print the training and evaluation loss log
+                # Predict the training accuracy for the current epoch
+                train_accuracy = train_correct / train_total
+
+                # Save and print the metrics for the current epoch
+                self.train_loss[epoch, :] = np.array(train_loss)
+                self.train_acc[epoch] = np.array(train_accuracy)
+                print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
+                print("Training accuracy:", train_accuracy)
+
+        # Print the final training log that shows the loss of each epoch
         print("Training loss log: ", self.train_loss.mean(axis=1)[:-1])
-        print("Validation loss log: ", self.eval_loss.mean(axis=1)[:-1])
 
     def plot_metrics(self, save_path):
         # Set the number of epochs used for the plots
@@ -205,32 +282,13 @@ class VisualEncoder(nn.Module):
                    "train_acc": self.train_acc,
                    "eval_loss" : self.eval_loss,
                    "eval_acc": self.eval_acc,
-                   "epochs": self.epochs
+                   "epochs": [i for i in self.epoch_ordering.values()],
+                   "frozen_until": [i for i in self.layer_freezing.values()]
         }
         np.save(path + "_cls_species.npy", metrics)
     
     def load(self, path):
         self.load_state_dict(torch.load(path))
-
-
-def collate(batch):
-    """Custom collation function for the dataset, extract images from the batch and process them with the AutoImageProcessor.
-
-    Args:
-        batch(dict): The batch containing the data subset
-
-    Returns:
-        torch.tensor: The stacked tensor of the batch of images.
-        labels: The stacked tensor of the corresponding labels of the batch of images.
-    """
-    images = batch["image"]
-    labels = [species_dict[i] for i in batch["species"]]
-
-    # Use the model AutoImageProcessor to process the images for a better representation
-    inputs = processor(images=images, return_tensors="pt")
-
-    return {"images": inputs["pixel_values"].to(device), 
-            "labels": torch.Tensor(labels).long().to(device)}
 
 if __name__ == "__main__":
     # Set the seed for everything to be deterministic
@@ -243,47 +301,121 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+    # Set the cache directory location
+    cache_dir = "/data/s4514998/hf/datasets"
+
+    # Enable hierarchical training, False for singular species level
+    hierachical = True 
+
     # Load the BIOSCAN5M train dataset
-    train_dataset = load_dataset("dataset.py", 
-                                 name="cropped_256_train", 
-                                 split="train", 
-                                 trust_remote_code=True, 
-                                 cache_dir="/data/s4514998/hf/datasets")
+    train_dataset = load_dataset(
+        "dataset.py",
+        name="cropped_256_train", 
+        split="train", 
+        trust_remote_code=True,
+        token=apitoken,
+        #cache_dir="/data/s4514998/hf/datasets"
+        )
     train_dataset = train_dataset.with_format("torch", device=device)
 
     # Load the BIOSCAN5M validation dataset
-    eval_dataset = load_dataset("dataset.py", 
-                                name="cropped_256_eval", 
-                                split="validation", 
-                                trust_remote_code=True, 
-                                cache_dir="/data/s4514998/hf/datasets")
+    eval_dataset = load_dataset(
+        "dataset.py", 
+        name="cropped_256_eval", 
+        split="validation", 
+        trust_remote_code=True, 
+        token=apitoken,
+        #cache_dir="/data/s4514998/hf/datasets"
+        )
     eval_dataset = eval_dataset.with_format("torch", device=device)
 
-    # Initialize the species labels for the unique species classes
-    uniq_species = set(train_dataset["species"])
-    n_classes = len(uniq_species)
+    # Initialize the taxonomic labels for organisms in the dataset
+    uniq_classes = set.union(set(train_dataset["class"]), set(train_dataset["class"])) # Class taxonomic level
+    class_dict = {entry: i for i, entry in enumerate(uniq_classes)}
+    n_class = len(uniq_classes)
+
+    uniq_orders = set.union(set(train_dataset["order"]), set(eval_dataset["order"])) # Order taxonomic level
+    order_dict = {entry: i for i, entry in enumerate(uniq_orders)}
+    n_orders = len(uniq_orders)
+
+    uniq_families = set.union(set(train_dataset["family"]), set(eval_dataset["family"])) # Family taxonomic level
+    family_dict = {entry: i for i, entry in enumerate(uniq_families)}
+    n_family = len(uniq_families)
+
+    uniq_genus = set.union(set(train_dataset["genus"]), set(eval_dataset["genus"])) # Genus taxonomic level
+    genus_dict = {entry: i for i, entry in enumerate(uniq_genus)}
+    n_genus = len(uniq_genus)
+
+    uniq_species = set.union(set(train_dataset["species"]), set(train_dataset["species"])) # Species taxonomic level
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
+    n_species = len(uniq_species)
 
-    # Initialize the parameters used for the model
-    parameters = dict(
-        lr = 5e-5,
-        epochs=200,
-        steps_per_epoch=200,
-        batch_size=32,
-        n_classes=n_classes
+    if hierachical:
+        # Initialize parameters to perform hierarchical training
+        parameters = dict(
+            lr = 5e-5,
+            steps_per_epoch=200,
+            batch_size=4,
+            class_values = {
+                "class": n_class,
+                "order": n_orders,
+                "family":n_family,
+                "genus": n_genus,
+                "species": n_species,
+                },
+            class_mapping = {
+                "class": class_dict,
+                "order": order_dict,
+                "family": family_dict,
+                "genus": genus_dict,
+                "species": species_dict,
+                },
+            epoch_ordering = {
+                "class": 2,
+                "order": 4,
+                "family": 25,
+                "genus": 50,
+                "species": 200
+                }, # Number of epochs for each step.
+            layer_freezing = {
+                "class": None,
+                "order": 1,
+                "family": 4,
+                "genus": 5,
+                "species": 9,
+                }
+        )
+    
+    else:
+        # Initialize the parameters to perform singular species training
+        parameters = dict(
+            lr = 5e-5,
+            steps_per_epoch=200,
+            batch_size=4,
+            class_values = {
+                "species": n_species,
+                },
+            class_mapping = {
+                "species": species_dict,
+                },
+            epoch_ordering = {
+                "species": 200
+                }, # Number of epochs for each step.
+            layer_freezing = {
+                "species": None,
+                }
+        )
+
+    # Set the model parameters and train the model
+    model = VisualEncoder(
+        #cache_dir=cache_dir,
+        params=parameters,
     )
+    model = model.to(device)
+    model.train_loop(train_dataset, eval_dataset)
 
-    # Initialize the Visual Encoder model
-    visual_encoder = AutoModel.from_pretrained('facebook/dinov2-small', 
-                                               cache_dir="/data/s4514998/hf/datasets")
-    model = VisualEncoder(visual_encoder, params=parameters)
-    model.to(device)
-
-    # Train the model
-    model.fit(train_dataset=train_dataset, eval_dataset=eval_dataset)
-
-    # Save the model
-    model.save("/local/mmeb_s4514998/model.weights")
+    # Save the model weights obtained
+    model.save("/local/mmeb_s4501888/model.weights")
 
     # Plot the metrics of the model
     model.plot_metrics(save_path="/local/mmeb_s4514998/metrics")
