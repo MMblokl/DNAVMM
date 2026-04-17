@@ -169,6 +169,19 @@ def training_loop(model, tokenizer, optimizer, chunk_size=5000):
 
     #     return metrics
 
+
+def sliding_kmers(sequence, k=3, max_length=512, stride=512):
+    """Transforms a single sequence into chunks of a certain lengths"""
+    kmers = [sequence[i:i+k] for i in range(len(sequence) - k + 1)]
+    
+    chunks = []
+    for i in range(0, len(kmers), stride):
+        chunk = kmers[i:i + max_length]
+        if len(chunk) == 0:
+            continue
+        chunks.append(" ".join(chunk))
+    return chunks
+
 if __name__ == "__main__":
     chunk_size = 10000
     tokenizer, optimizer, model = load_model()
