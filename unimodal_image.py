@@ -9,6 +9,7 @@ import os
 import numpy as np
 import random
 import matplotlib.pyplot as plt
+from sklearn.metrics import f1_score
 
 load_dotenv()
 apitoken =os.getenv("API_KEY")
@@ -85,8 +86,10 @@ class VisualEncoder(nn.Module):
         # Save the model metrics
         self.train_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
         self.eval_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
-        self.train_acc = np.zeros(total_epochs)
-        self.eval_acc = np.zeros(total_epochs)
+        self.train_acc = 0
+        self.eval_acc = 0
+        self.train_f1 = 0
+        self.eval_f1 = 0
 
     def collate_fn(self, batch):
         """Custom collation function for the dataset, extract images from the batch and process them with the AutoImageProcessor.
@@ -124,6 +127,8 @@ class VisualEncoder(nn.Module):
         train_loss = [] # List for the training loss
         train_correct = 0 # The number of correct predictions
         train_total = 0 # Total number of training labels
+        prediction_list = [] # List for all predictions done per epoch
+        labels_list = [] # List for all labels per epoch
 
         for timestep, idx in enumerate(range(self.batch_size, len(train_dataset), self.batch_size)):
             self.optimizer.zero_grad() # Zero out previous grad
@@ -139,11 +144,12 @@ class VisualEncoder(nn.Module):
             logits = self.forward(images=images)
             loss = self.criterion(logits, labels)
 
-
             # Compute the training metrics
             prediction = torch.argmax(logits, dim=1)
             train_correct += (prediction == labels).sum().item()
             train_total += labels.size(0)
+            prediction_list.extend(prediction.cpu().detach().numpy())
+            labels_list.extend(labels.cpu().detach().numpy())
 
             # Backward pass
             loss.backward() 
@@ -158,8 +164,8 @@ class VisualEncoder(nn.Module):
                 
             # Reset the previous index of the dataset
             prev = idx
-
-        return train_correct, train_total, train_loss
+        
+        return train_correct, train_total, train_loss, prediction_list, labels_list
     
 
     def evaluate(self, eval_dataset):
@@ -169,12 +175,14 @@ class VisualEncoder(nn.Module):
         eval_loss = [] # List for the validation loss
         eval_correct = 0 # The number of correct predictions
         eval_total = 0 # Total number of validation labels
+        prediction_list = [] # List for all predictions done per epoch
+        labels_list = [] # List for all labels per epoch
   
         with torch.no_grad():  # Disable gradient computation for evaluation
             for timestep, idx in enumerate(range(self.batch_size, len(eval_dataset), self.batch_size)):
 
                 # Collate the dataset to get the batches needed to evaluate the model
-                batch = self.collate_fn(train_dataset[prev:idx])
+                batch = self.collate_fn(eval_dataset[prev:idx])
 
                 # Get the images and labels from the current batch
                 images = batch["images"]
@@ -188,6 +196,8 @@ class VisualEncoder(nn.Module):
                 prediction = torch.argmax(logits, dim=1)
                 eval_correct += (prediction == labels).sum().item()
                 eval_total += labels.size(0)
+                prediction_list.extend(prediction.cpu().detach().numpy())
+                labels_list.extend(labels.cpu().detach().numpy())
 
                 # Save the loss
                 eval_loss.append(loss.item())
@@ -199,7 +209,7 @@ class VisualEncoder(nn.Module):
                 # Reset the previous index of the dataset
                 prev = idx
 
-        return eval_correct, eval_total, eval_loss
+        return eval_correct, eval_total, eval_loss, prediction_list, labels_list
 
     def freeze_until(self, model, until):
         """Freezes the weights of a given model according to the given the value. If until=1, first 2 layers are frozen."""
@@ -207,11 +217,11 @@ class VisualEncoder(nn.Module):
             # If the index is with in the to be frozen layers
             if i <= until:
                 for param in layer.parameters():
-                    param.required_grad = False
+                    param.requires_grad = False
 
     def update_optimizer(self):
         """Updates the optimizer to only use the trainable model params"""
-        trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+        trainable_params = filter(lambda p: p.requires_grad, self.parameters())
         self.optimizer = torch.optim.Adam(trainable_params, lr=self.lr)
 
     def train_loop(self, train_dataset, eval_dataset):
@@ -228,7 +238,6 @@ class VisualEncoder(nn.Module):
                 # Set the optimizer to only optimise on non-frozen weights
                 self.update_optimizer()
 
-
             # Replace the final class head layer with a new output layer that matches the number of classes
             self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
 
@@ -239,40 +248,45 @@ class VisualEncoder(nn.Module):
                 print(f"Epoch {epoch+1}/{epochs} for {labeltype}.")
 
                 # Train on the dataset for an entire epoch
-                train_correct, train_total, train_loss = self.fit(train_dataset=train_dataset)
+                train_correct, train_total, train_loss, train_preds, train_labels = self.fit(train_dataset=train_dataset)
 
-                # Predict the training accuracy for the current epoch
-                train_accuracy = train_correct / train_total
+                # Test the validation dataset for an entire epoch
+                eval_correct, eval_total, eval_loss, eval_preds, eval_labels = self.evaluate(eval_dataset=eval_dataset)
 
-                # Save and print the metrics for the current epoch
+                # Save and print the training metrics for the current epoch
                 self.train_loss[epoch, :] = np.array(train_loss)
-                self.train_acc[epoch] = np.array(train_accuracy)
                 print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
-                print("Training accuracy:", train_accuracy)
+
+                # Save and print the validation metrics for the current epoch
+                self.eval_loss[epoch, :] = np.array(eval_loss)
+                print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
+            
+        # Compute and save the accuracy after training
+        self.train_acc = train_correct / train_total
+        self.eval_acc = eval_correct / eval_total
+
+        # Compute and save the F1 score after training, using macro to deal with multiclass classification
+        self.train_f1 = f1_score(train_labels, train_preds, average="macro")
+        self.eval_f1 = f1_score(eval_labels, eval_preds, average="macro")
+
+        print(f"Training accuracy: {self.train_acc} Training F1 score: {self.train_f1}")
+        print(f"Training accuracy: {self.eval_acc} Training F1 score: {self.eval_f1}")
 
         # Print the final training log that shows the loss of each epoch
         print("Training loss log: ", self.train_loss.mean(axis=1)[:-1])
 
     def plot_metrics(self, save_path):
         # Set the number of epochs used for the plots
-        epochs = range(1, self.epochs + 1)
-
+        epochs = range(1, self.epoch_ordering["species"]+1)
+  
         # Plot the loss metrics for the model training and validation and save the figure
         fig, ax = plt.subplots()
-        ax.plot(epochs, self.train_loss.mean(axis=1)[:-1], label="Train Loss")
-        ax.plot(epochs, self.eval_loss.mean(axis=1)[:-1], label="Validation Loss")
+        ax.plot(epochs, self.train_loss.mean(axis=1)[:-1][0:self.epoch_ordering["species"]], label="Train Loss")
+        ax.plot(epochs, self.eval_loss.mean(axis=1)[:-1][0:self.epoch_ordering["species"]], label="Validation Loss")
         ax.set(xlabel="Epochs", ylabel="Loss", title="Training vs Validation Loss")
         ax.legend()
         fig.savefig(f"{save_path}_loss.png")
 
-        # Plot the accuracy metrics for the model training and validation and save the figure
-        fig, ax = plt.subplots()
-        ax.plot(epochs, self.train_acc, label="Train Accuracy")
-        ax.plot(epochs, self.eval_acc, label="Validation Accuracy")
-        ax.set(xlabel="Epochs", ylabel="Accuracy", title="Training vs Validation Accuracy")
-        ax.legend()
-        fig.savefig(f"{save_path}_accuracy.png")
-  
     def save(self, path):
         # Save the weights
         torch.save(self.state_dict(), path)
@@ -280,8 +294,10 @@ class VisualEncoder(nn.Module):
         # Save the metrics in one file
         metrics = {"train_loss": self.train_loss,
                    "train_acc": self.train_acc,
+                   "train_f1":  self.train_f1,
                    "eval_loss" : self.eval_loss,
                    "eval_acc": self.eval_acc,
+                   "eval_f1": self.eval_f1,
                    "epochs": [i for i in self.epoch_ordering.values()],
                    "frozen_until": [i for i in self.layer_freezing.values()]
         }
@@ -305,7 +321,7 @@ if __name__ == "__main__":
     cache_dir = "/data/s4514998/hf/datasets"
 
     # Enable hierarchical training, False for singular species level
-    hierachical = True 
+    hierachical = True
 
     # Load the BIOSCAN5M train dataset
     train_dataset = load_dataset(
@@ -314,7 +330,7 @@ if __name__ == "__main__":
         split="train", 
         trust_remote_code=True,
         token=apitoken,
-        #cache_dir="/data/s4514998/hf/datasets"
+        cache_dir="/data/s4514998/hf/datasets"
         )
     train_dataset = train_dataset.with_format("torch", device=device)
 
@@ -325,7 +341,7 @@ if __name__ == "__main__":
         split="validation", 
         trust_remote_code=True, 
         token=apitoken,
-        #cache_dir="/data/s4514998/hf/datasets"
+        cache_dir="/data/s4514998/hf/datasets"
         )
     eval_dataset = eval_dataset.with_format("torch", device=device)
 
@@ -355,7 +371,7 @@ if __name__ == "__main__":
         parameters = dict(
             lr = 5e-5,
             steps_per_epoch=200,
-            batch_size=4,
+            batch_size=16,
             class_values = {
                 "class": n_class,
                 "order": n_orders,
@@ -391,7 +407,7 @@ if __name__ == "__main__":
         parameters = dict(
             lr = 5e-5,
             steps_per_epoch=200,
-            batch_size=4,
+            batch_size=16,
             class_values = {
                 "species": n_species,
                 },
@@ -408,14 +424,14 @@ if __name__ == "__main__":
 
     # Set the model parameters and train the model
     model = VisualEncoder(
-        #cache_dir=cache_dir,
+        cache_dir=cache_dir,
         params=parameters,
     )
     model = model.to(device)
     model.train_loop(train_dataset, eval_dataset)
 
     # Save the model weights obtained
-    model.save("/local/mmeb_s4501888/model.weights")
+    model.save("/local/MM_4514998/model.weights")
 
     # Plot the metrics of the model
-    model.plot_metrics(save_path="/local/mmeb_s4514998/metrics")
+    model.plot_metrics(save_path="/local/MM_4514998/metrics")
