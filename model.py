@@ -617,4 +617,5 @@ if __name__ == "__main__":
     model = model.to(device)
     model.train_loop(train_dataset, eval_dataset)
     model.save(f"./{run_name}/")
+    model.plot_metrics(save_path=f"./{run_name}")
 
