@@ -1,6 +1,25 @@
 # DNAVMM
 Multi-modal DNA and vision species classification model for Multimodal Models in Ecology and Biodiversity.
 
+# Requirements
+Multiple ways to install required packages, but UV is the easiest. The version numbers are VERY important due to BIOSCAN-1M requirements.
+- uv:
+    - uv sync
+- venv pip:
+    - python -m venv .venv
+    - source .venv/bin/activate
+    - pip install -r requirements.txt
+- List of required packages:
+    - torch == 2.7.0
+    - datasets == 3.6.0
+    - torchvision == 0.22.0
+    - dotenv
+    - matplotlib
+    - transformers
+    - scikit-learn
+
+
+
 # Command line arguments
 In order to run the model in different modes, specific arguments have to supplied when running the scripts.
 
