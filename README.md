@@ -24,10 +24,12 @@ Multiple ways to install required packages, but UV is the easiest. The version n
 In order to run the model in different modes, specific arguments have to supplied when running the scripts.
 
 First argument defines the run name, under which weights and metrics are saved
-
 Dataset randomization during training: "ds_rand"
+
 Data augmentation during training: "augment"
+
 Hierarchical training scheme: "hierarchical"
+
 Make the DNABERT self-attention input size 1024: "large_tokenizer", only works on unimodal_DNA and fusion model.
 
 Command examples:

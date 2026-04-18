@@ -594,8 +594,8 @@ if __name__ == "__main__":
     else:
         parameters = dict(
             lr = 5e-5,
-            steps_per_epoch=2,
-            batch_size=4,
+            steps_per_epoch=200,
+            batch_size=16,
             class_values = {
                 "species": n_species,
                 },
