@@ -8,6 +8,7 @@ import random
 import os
 from dotenv import load_dotenv
 import matplotlib.pyplot as plt
+from sklearn.metrics import f1_score
 
 
 load_dotenv()
@@ -111,8 +112,10 @@ class DNAVMM(nn.Module):
         # Training metrics storage
         self.train_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
         self.eval_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
-        self.train_acc = np.zeros(total_epochs)
-        self.eval_acc = np.zeros(total_epochs)
+        self.train_acc = 0
+        self.eval_acc = 0
+        self.train_f1 = 0
+        self.eval_f1 = 0
 
     def enlargen_tokenizer(self):
         # Double size of the model for 1024 input size of DNA
@@ -157,14 +160,15 @@ class DNAVMM(nn.Module):
 
         return logits
     
-    def fit(self, train_dataset):
-        """Fit the model on a shuffle of the dataset, once per epoch"""
-        # Loop through each epoch
-        self.train() # Turn on dropouts            
-        prev = 0
-        train_loss = []
-        train_correct = 0
-        train_total = 0
+    def fit(self, train_dataset, final: bool = False):
+        """Fit the model on a shuffled dataset for one epoch"""
+        self.train() # Turn on the dropouts
+        prev = 0   # Previous index of the dataset
+        train_loss = [] # List for the training loss
+        train_correct = 0 # The number of correct predictions
+        train_total = 0 # Total number of training labels
+        prediction_list = [] # List for all predictions done per epoch
+        labels_list = [] # List for all labels per epoch
 
         for timestep, idx in enumerate(range(self.batch_size, len(train_dataset), self.batch_size)):
             self.optimizer.zero_grad() # Zero out previous grad
@@ -181,32 +185,45 @@ class DNAVMM(nn.Module):
             # Calculate loss
             logits = self.forward(images=images, dna=tokenized_barcodes)
             loss = self.criterion(logits, labels)
-
-            prediction = torch.argmax(logits, dim=1)
-            train_correct += (prediction == labels).sum().item()
-            train_total += labels.size(0)
-
-            # Backprop loss
+            
+            # Backwards pass
             loss.backward()
             self.optimizer.step()
-                
+
             # Save the loss to storage
             train_loss.append(loss.item())
+
+            # To make the runtime faster, we only calculate metrics for the final epoch
+            if final:
+                # Compute metrics
+                prediction = torch.argmax(logits, dim=1)
+                train_correct += (prediction == labels).sum().item()
+                train_total += labels.size(0)
+                prediction_list.extend(prediction.cpu().detach().numpy())
+                labels_list.extend(labels.cpu().detach().numpy())
+            
             # Break training when steps are done
             if timestep == self.steps_per_epoch - 1:
                 break
                 
             # reset prev
             prev = idx
-        return train_correct, train_total, train_loss
 
-    def evaluate(self, eval_dataset):
-        """Single evaluation run on dataset for each epoch"""
-        # Initialize prev and the train loss, and the training metrics
-        prev = 0
-        eval_loss = []
-        eval_prediction = 0
-        eval_total = 0
+        if final:
+            return train_correct, train_total, train_loss, prediction_list, labels_list
+        else:
+            return train_loss
+
+
+    def evaluate(self, eval_dataset, final: bool = False):
+        """Single evaluation run on the validation dataset for each epoch."""
+        self.eval() # Turn off the dropouts
+        prev = 0   # Previous index of the dataset
+        eval_loss = [] # List for the validation loss
+        eval_correct = 0 # The number of correct predictions
+        eval_total = 0 # Total number of validation labels
+        prediction_list = [] # List for all predictions done per epoch
+        labels_list = [] # List for all labels per epoch
 
         with torch.no_grad():  # Disable gradient computation for evaluation
             for timestep, idx in enumerate(range(self.batch_size, len(eval_dataset), self.batch_size)):
@@ -219,17 +236,21 @@ class DNAVMM(nn.Module):
                 barcodes = batch["barcodes"]
                 tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True, truncation=True).to(device)
                 
-
+                # Loss calculation
                 logits = self.forward(images=images, dna=tokenized_barcodes)
                 loss = self.criterion(logits, labels)
-
+                
                 # Save the loss
                 eval_loss.append(loss.item())
 
-                # Compute metrics
-                prediction = torch.argmax(logits, dim=1)
-                eval_prediction += (prediction == labels).sum().item()
-                eval_total += labels.size(0)
+                # Compute these metrics only on the final epoch
+                if final:
+                    # Compute metrics
+                    prediction = torch.argmax(logits, dim=1)
+                    eval_correct += (prediction == labels).sum().item()
+                    eval_total += labels.size(0)
+                    prediction_list.extend(prediction.cpu().detach().numpy())
+                    labels_list.extend(labels.cpu().detach().numpy())
 
                 # Break the loop when the set number of training steps are reached
                 if timestep == self.steps_per_epoch - 1:
@@ -237,20 +258,26 @@ class DNAVMM(nn.Module):
                     
                 # Reset prev
                 prev = idx
-        return eval_prediction, eval_total, eval_loss
+        if final:
+            return eval_correct, eval_total, eval_loss, prediction_list, labels_list
+        else:
+            return eval_loss
     
+
     def freeze_until(self, model, until):
         """Freezes weights of given model given the value. If until=1, first 2 layers are frozen."""
         for i, layer in enumerate(model.encoder.layer):
             # If the index is withing the to be frozen layers
             if i <= until:
                 for param in layer.parameters():
-                    param.required_grad = False
+                    param.requires_grad = False
+
 
     def update_optimizer(self):
         """Updates optimizer to only use trainable model params"""
-        trainable_params = filter(lambda p: p.requires_grad, model.parameters())
+        trainable_params = filter(lambda p: p.requires_grad, self.parameters())
         self.optimizer = torch.optim.Adam(trainable_params, lr=self.lr)
+
 
     def train_loop(self, train_dataset, eval_dataset):
         # Loop through class label types
@@ -265,11 +292,11 @@ class DNAVMM(nn.Module):
                 self.freeze_until(self.dna_encoder, until)
                 self.freeze_until(self.visual_encoder, until)
 
-                # Make sure optim only optimizes on non-frozen weights
-                self.update_optimizer()
-
             # Replace final class head layer with a new output layer matching the number of classes
             self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
+
+            # Make sure optim only optimizes trainable weights with requires_grad=true
+            self.update_optimizer()
 
             # Epoch loop
             for epoch in range(epochs):
@@ -277,69 +304,45 @@ class DNAVMM(nn.Module):
                 train_dataset = train_dataset.shuffle()
                 print(f"Epoch {epoch+1}/{epochs} for {labeltype}.")
 
-                # Train on the dataset for the entire epoch
-                train_correct, train_total, train_loss = self.fit(train_dataset=train_dataset)
+                # Check for final epoch when calling self.fit and evaluate.
+                if epoch + 1 == epochs:
+                    train_correct, train_total, train_loss, train_preds, train_labels = self.fit(train_dataset=train_dataset, final=True)
+                    eval_correct, eval_total, eval_loss, eval_preds, eval_labels = self.evaluate(eval_dataset=eval_dataset, final=True)
+                else:
+                    train_loss = self.fit(train_dataset=train_dataset)
+                    eval_loss = self.evaluate(eval_dataset=eval_dataset)
 
-                train_accuracy = train_correct / train_total
                 # Save and print the metrics for the current epoch
                 self.train_loss[epoch, :] = np.array(train_loss)
-                self.train_acc[epoch] = np.array(train_accuracy)
                 print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
-                print("Training accuracy:", train_accuracy)
+                self.eval_loss[epoch, :] = np.array(eval_loss)
+                print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
 
+        # Compute and save the accuracy after training
+        self.train_acc = train_correct / train_total
+        self.eval_acc = eval_correct / eval_total
+
+        # Compute and save the F1 score after training, using macro to deal with multiclass classification
+        self.train_f1 = f1_score(train_labels, train_preds, average="macro")
+        self.eval_f1 = f1_score(eval_labels, eval_preds, average="macro")
+
+        print(f"Training accuracy: {self.train_acc} Training F1 score: {self.train_f1}")
+        print(f"Training accuracy: {self.eval_acc} Training F1 score: {self.eval_f1}")
         print("Training loss log: ", self.train_loss.mean(axis=1)[:-1])
-
-        # for epoch in range(self.epochs):
-            
-        #     # Shuffle the dataset at the start for more variable data training
-        #     train_dataset = train_dataset.shuffle()
-        #     print(f"Epoch {epoch+1}/{self.epochs}")
-
-        #     # Fit model on current shuffle
-        #     train_correct, train_total, train_loss = self.fit(train_dataset=train_dataset)
-        #     # Calculate accuracy for the training dataset
-        #     train_accuracy = train_correct / train_total
-            
-        #     # Save and print the metrics for the current epoch
-        #     self.train_loss[epoch, :] = np.array(train_loss)
-        #     self.train_acc[epoch] = np.array(train_accuracy)
-        #     print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
-        #     print("Training accuracy:", train_accuracy)
-
-        #     # Valiation
-        #     # eval_prediction, eval_total, eval_loss = self.evaluate(eval_dataset=eval_dataset)
-        #     # Calculate accuracy for the validation dataset
-        #     # eval_accuracy = eval_prediction / eval_total
-
-        #     # self.eval_loss[epoch, :] = np.array(eval_loss)
-        #     # self.eval_acc[epoch] = np.array(eval_accuracy)
-        #     # print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
-        #     # print("Validation accuracy: ", eval_accuracy)
-        
-        # # Print the training and evaluation loss log
-        # print("Training loss log: ", self.train_loss.mean(axis=1)[:-1])
-        # # print("Validation loss log: ", self.eval_loss.mean(axis=1)[:-1])
 
     def plot_metrics(self, save_path):
         # Set the number of epochs used for the plots
-        epochs = range(1, self.epochs + 1)
+        epochs = range(1, self.epoch_ordering["species"]+1)
 
         # Plot the loss metrics for the model training and validation and save the figure
         fig, ax = plt.subplots()
-        ax.plot(epochs, self.train_loss.mean(axis=1)[:-1], label="Train Loss")
-        ax.plot(epochs, self.eval_loss.mean(axis=1)[:-1], label="Validation Loss")
+        ax.plot(epochs, self.train_loss.mean(axis=1)[:-1][0:self.epoch_ordering["species"]], label="Train Loss")
+        ax.plot(epochs, self.eval_loss.mean(axis=1)[:-1][0:self.epoch_ordering["species"]], label="Validation Loss")
         ax.set(xlabel="Epochs", ylabel="Loss", title="Training vs Validation Loss")
         ax.legend()
         fig.savefig(f"{save_path}_loss.png")
 
-        # Plot the accuracy metrics for the model training and validation and save the figure
-        fig, ax = plt.subplots()
-        ax.plot(epochs, self.train_acc, label="Train Accuracy")
-        ax.plot(epochs, self.eval_acc, label="Validation Accuracy")
-        ax.set(xlabel="Epochs", ylabel="Accuracy", title="Training vs Validation Accuracy")
-        ax.legend()
-        fig.savefig(f"{save_path}_accuracy.png")
-  
+
     def save(self, path):
         # Save the weights
         torch.save(self.state_dict(), path)
@@ -347,8 +350,10 @@ class DNAVMM(nn.Module):
         # Save the metrics in one file
         metrics = {"train_loss": self.train_loss,
                    "train_acc": self.train_acc,
+                   "train_f1": self.train_f1,
                    "eval_loss" : self.eval_loss,
                    "eval_acc": self.eval_acc,
+                   "eval_f1": self.eval_f1,
                    "epochs": [i for i in self.epoch_ordering.values()],
                    "frozen_until": [i for i in self.layer_freezing.values()]
         }
@@ -368,7 +373,15 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    cache_dir = "/data/s4501888/hf/datasets"
+    # Set to true to set to hierarchical training.
+    hierarchical = False
+    # If cache needs to be used
+    use_cache = False
+    
+    if use_cache:
+        cache_dir = "/data/s4501888/hf/datasets"
+    else:
+        cache_dir = None
 
     # Train dataset
     train_dataset = load_dataset(
@@ -377,7 +390,7 @@ if __name__ == "__main__":
         split="train",
         trust_remote_code=True,
         token=apitoken,
-        # cache_dir=cache_dir
+        cache_dir=cache_dir
     )
     train_dataset = train_dataset.with_format("torch", device=device)
 
@@ -387,7 +400,7 @@ if __name__ == "__main__":
                                 split="validation", 
                                 trust_remote_code=True,
                                 token=apitoken,
-                                # cache_dir=cache_dir
+                                cache_dir=cache_dir
     )
     eval_dataset = eval_dataset.with_format("torch", device=device)
 
@@ -412,64 +425,63 @@ if __name__ == "__main__":
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
     n_species = len(uniq_species)
     
-    # For singlestage, add only species, and only those values for each other param.
-    parameters = dict(
-        lr = 5e-5,
-        steps_per_epoch=200,
-        batch_size=4,
-        class_values = {
-            "class": n_class,
-            "order": n_orders,
-            "family":n_family,
-            "genus": n_genus,
-            "species": n_species,
-            },
-        class_mapping = {
-            "class": class_dict,
-            "order": order_dict,
-            "family": family_dict,
-            "genus": genus_dict,
-            "species": species_dict,
-            },
-        epoch_ordering = {
-            "class": 2,
-            "order": 4,
-            "family": 25,
-            "genus": 50,
-            "species": 200
-            }, # Number of epochs for each step.
-        layer_freezing = {
-            "class": None,
-            "order": 1,
-            "family": 4,
-            "genus": 5,
-            "species": 9,
-            },
-        k=6,
-    )
-    
-    # Uncomment to enable SINGLE level
-    # parameters = dict(
-    #     lr = 5e-5,
-    #     steps_per_epoch=200,
-    #     batch_size=4,
-    #     class_values = {
-    #         "species": n_species,
-    #         },
-    #     class_mapping = {
-    #         "species": species_dict,
-    #         },
-    #     epoch_ordering = {
-    #         "species": 200
-    #         }, # Number of epochs for each step.
-    #     layer_freezing = {
-    #         "species": None,
-    #         },
-    #     k=6,
-    # )
+    if hierarchical:
+        parameters = dict(
+            lr = 5e-5,
+            steps_per_epoch=200,
+            batch_size=16,
+            class_values = {
+                "class": n_class,
+                "order": n_orders,
+                "family":n_family,
+                "genus": n_genus,
+                "species": n_species,
+                },
+            class_mapping = {
+                "class": class_dict,
+                "order": order_dict,
+                "family": family_dict,
+                "genus": genus_dict,
+                "species": species_dict,
+                },
+            epoch_ordering = {
+                "class": 2,
+                "order": 4,
+                "family": 10,
+                "genus": 25,
+                "species": 100
+                }, # Number of epochs for each step.
+            layer_freezing = {
+                "class": None,
+                "order": 1,
+                "family": 4,
+                "genus": 5,
+                "species": 9,
+                },
+            k=6,
+        )
+    else:
+        parameters = dict(
+            lr = 5e-5,
+            steps_per_epoch=200,
+            batch_size=16,
+            class_values = {
+                "species": n_species,
+                },
+            class_mapping = {
+                "species": species_dict,
+                },
+            epoch_ordering = {
+                "species": 100
+                }, # Number of epochs for each step.
+            layer_freezing = {
+                "species": None,
+                },
+            k=6,
+        )
 
     model = DNAVMM(
-        # cache_dir=cache_dir,
+        cache_dir=cache_dir,
         params=parameters,
     )
     model = model.to(device)
