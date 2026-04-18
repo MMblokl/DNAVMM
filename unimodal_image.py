@@ -621,15 +621,15 @@ if __name__ == "__main__":
     model.train_loop(train_dataset, eval_dataset)
 
     # Save the model weights obtained
-    model.save("/local/MM_4514998/model.weights")
+    model.save(f"./{run_name}")
 
     # Plot the metrics of the model
-    model.plot_metrics(save_path="/local/MM_4514998/metrics")
+    model.plot_metrics(save_path=f"./{run_name}")
 
     if augmentation:
         # Visualize the training images and augment examples
         model.visualize_augment(
             train_dataset=train_dataset,
-            save_path="/local/MM_4514998/augment_plot",
+            save_path=f"./{run_name}/augment_plot",
             n_images=20
         )
