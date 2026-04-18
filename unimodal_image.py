@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+import torchvision.transforms as T
 from datasets import load_dataset
 from transformers import AutoModel, set_seed, AutoImageProcessor
 from dotenv import load_dotenv
@@ -19,14 +20,17 @@ global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class VisualEncoder(nn.Module):
-    def __init__(self, 
-                 params: dict,
+    def __init__(self,
+                params: dict,
                 v_enc: str = "facebook/dinov2-small",
                 i_processor: str = "facebook/dinov2-small",
-                cache_dir: str | bool = False
+                cache_dir: str | bool = False,
+                ds_randomization: bool = False | True,
+                augmentation: bool = False | True
                 ):
+
         super(VisualEncoder, self).__init__()
-        # Determine wheter to use the pre-defined cache directory for the parameters and data
+        # Determine whether to use the pre-defined cache directory for the parameters and data
         if cache_dir:
             self.visual_encoder = AutoModel.from_pretrained(
                 v_enc,
@@ -60,6 +64,12 @@ class VisualEncoder(nn.Module):
         self.steps_per_epoch = params["steps_per_epoch"]
         self.batch_size = params["batch_size"]
 
+        # Initialize whether to use dataset randomization
+        self.ds_randomization = ds_randomization
+
+        # Initialize whether to use image augmentation
+        self.augmentation = augmentation
+
         # Initialize the total epochs
         total_epochs = sum(self.epoch_ordering.values())
 
@@ -84,6 +94,24 @@ class VisualEncoder(nn.Module):
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         self.criterion = nn.CrossEntropyLoss()
 
+        # Set the image augmentations
+        self.augment = T.Compose([
+            # Convert the image to float32
+            T.ConvertImageDtype(torch.float32),
+
+            # Randomly flip the image
+            T.RandomHorizontalFlip(), # 50% chance to flip horizontal
+            T.RandomVerticalFlip(), # 50% chance to flip vertical
+
+            # Randomly apply gaussian noise to the image
+            T.RandomApply(
+                [T.v2.GaussianNoise(sigma=0.075)],
+            p=0.5), # 50% to apply gaussian gaussian noise
+
+            # Convert the image back to int8
+            T.ConvertImageDtype(torch.uint8)
+        ])
+
         # Save the model metrics
         self.train_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
         self.eval_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
@@ -92,7 +120,7 @@ class VisualEncoder(nn.Module):
         self.train_f1 = 0
         self.eval_f1 = 0
 
-    def collate_fn(self, batch):
+    def collate_fn(self, batch, train: bool = False):
         """Custom collation function for the dataset, extract images from the batch and process them with the AutoImageProcessor.
 
         Args:
@@ -103,7 +131,16 @@ class VisualEncoder(nn.Module):
             labels: The stacked tensor of the corresponding labels of the batch of images.
         """
         images = batch["image"]
+
+        # Determine whether to perform image augmentations on the training images
+        if self.augmentation:
+            # Apply the image augmentation method to every image
+            images = [self.augment(img) for img in images]
+
+        # Process the images with the DINOV2 image processor
         images = self.i_processor(images=images, return_tensors="pt").to(device)
+
+        # Map the hierarchical labels to class integers
         labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
         
         return {"images": images,
@@ -185,7 +222,7 @@ class VisualEncoder(nn.Module):
             for timestep, idx in enumerate(range(self.batch_size, len(eval_dataset), self.batch_size)):
 
                 # Collate the dataset to get the batches needed to evaluate the model
-                batch = self.collate_fn(eval_dataset[prev:idx])
+                batch = self.collate_fn(eval_dataset[prev:idx], train=False)
 
                 # Get the images and labels from the current batch
                 images = batch["images"]
@@ -252,10 +289,13 @@ class VisualEncoder(nn.Module):
 
             # Epoch loop
             for epoch in range(epochs):
-                if True:   
+                print(f"Epoch {epoch+1}/{epochs} for {labeltype}.")
+
+                # Check whether to perform training dataset randomization with .shuffle()
+                if self.ds_randomization:   
                     # Shuffle the training dataset
                     train_dataset = train_dataset.shuffle()
-                print(f"Epoch {epoch+1}/{epochs} for {labeltype}.")
+                
 
                 # Check for the final epoch when calling self.fit and self.evaluate
                 # Final epoch
@@ -288,7 +328,7 @@ class VisualEncoder(nn.Module):
         self.eval_f1 = f1_score(eval_labels, eval_preds, average="macro")
 
         print(f"Training accuracy: {self.train_acc} Training F1 score: {self.train_f1}")
-        print(f"Training accuracy: {self.eval_acc} Training F1 score: {self.eval_f1}")
+        print(f"Validation accuracy: {self.eval_acc} Validation F1 score: {self.eval_f1}")
 
         # Print the final training log that shows the loss of each epoch
         print("Training loss log: ", self.train_loss.mean(axis=1)[:-1])
@@ -324,6 +364,37 @@ class VisualEncoder(nn.Module):
     def load(self, path):
         self.load_state_dict(torch.load(path))
 
+    def visualize_augment(self, train_dataset, save_path, n_images):
+        # Create the output directory for the image plots
+        os.makedirs(save_path, exist_ok=True)
+
+        # Loop through the first set of images of the train dataset
+        for idx in range(n_images):
+            # Get the image dictionary for the current image
+            img_dict = train_dataset[idx]
+
+            # Get the original training image
+            original_img = img_dict["image"]
+
+            # Augment training image
+            augmented_img = self.augment(original_img)
+
+            # Create the subplot to show the original and augmented image
+            fig, axes = plt.subplots(1, 2, figsize=(6, 3))
+            # Original image
+            axes[0].imshow(T.ToPILImage()(original_img.cpu()))
+            axes[0].set_title("Original")
+            axes[0].axis("off")
+            # Augmented image
+            axes[1].imshow(T.ToPILImage()(augmented_img.cpu()))
+            axes[1].set_title("Augmented")
+            axes[1].axis("off")
+
+            # Plot and save the image
+            plt.tight_layout()
+            plt.savefig(os.path.join(save_path, f"Augmented_Image_{idx}.png"))
+            plt.close(fig)
+                
 if __name__ == "__main__":
     # Set the seed for everything to be deterministic
     seed = 202667
@@ -456,6 +527,8 @@ if __name__ == "__main__":
     model = VisualEncoder(
         cache_dir=cache_dir,
         params=parameters,
+        ds_randomization=ds_randomization,
+        augmentation=augmentation
     )
     model = model.to(device)
     model.train_loop(train_dataset, eval_dataset)
@@ -465,3 +538,11 @@ if __name__ == "__main__":
 
     # Plot the metrics of the model
     model.plot_metrics(save_path="/local/MM_4514998/metrics")
+
+    if augmentation:
+        # Visualize the training images and augment examples
+        model.visualize_augment(
+            train_dataset=train_dataset,
+            save_path="/local/MM_4514998/augment_plot",
+            n_images=20
+        )
