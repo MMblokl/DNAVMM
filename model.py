@@ -22,6 +22,7 @@ class DNAVMM(nn.Module):
     def __init__(
             self,
             params: dict,
+            run_name: str,
             d_enc: str = "zhihan1996/DNA_bert_6",
             v_enc: str = "facebook/dinov2-small",
             d_tokenizer: str = "zhihan1996/DNA_bert_6",
@@ -70,9 +71,6 @@ class DNAVMM(nn.Module):
                 i_processor,
                 token=apitoken,
             )
-        
-        # Use mode with larger self-attention matrix
-        self.enlargen_tokenizer()
 
         # init parameters
         self.lr = params["lr"]
@@ -86,11 +84,21 @@ class DNAVMM(nn.Module):
         self.batch_size = params["batch_size"]
         self.k = params["k"]
 
+        self.large_tokenizer = params["large_tokenizer"]
+        self.hierarchical = params["hierarchical"]
+        self.ds_rand = params["ds_randomization"]
+        self.augmentation = params["augmentation"]
+
         total_epochs = sum(self.epoch_ordering.values())
+        self.run_name = run_name
         
         # Hardcoded output sizes of DINOV2_small and DNABERT_6
         d_enc_size = 768
         v_enc_size = 384
+
+        if self.large_tokenizer:
+            # Use mode with larger self-attention matrix
+            self.enlargen_tokenizer()
 
         # Fully connected classification head
         self.class_head = nn.Sequential(
@@ -117,6 +125,10 @@ class DNAVMM(nn.Module):
         self.eval_acc = 0
         self.train_f1 = 0
         self.eval_f1 = 0
+        
+        # If the weights exist, we have to run from the checkpoint
+        if os.path.exists(f"./{run_name}/latest.pt"):
+            self.start_from_checkpoint(f"./{run_name}/")
 
     def enlargen_tokenizer(self):
         # Double size of the model for 1024 input size of DNA
@@ -161,6 +173,38 @@ class DNAVMM(nn.Module):
 
         return logits
     
+
+    def start_from_checkpoint(self, path):
+        # Load saved metrics
+        metrics = np.load(f"{path}/model_metrics.npy", allow_pickle=True).item()
+
+        self.train_loss = metrics["train_loss"]
+        self.train_acc = metrics["train_acc"]
+        self.labeltype = metrics["current_label"]
+        self.c_epoch = metrics["current_epoch"]
+        self.train_f1 = metrics["train_f1"]
+        self.eval_loss = metrics["eval_loss"]
+        self.eval_acc = metrics["eval_acc"]
+        self.eval_f1 = metrics["eval_f1"]
+        self.layer_freezing = metrics["frozen_until"]
+
+        # Reconstruct the weights to match the previous state
+        # Make sure class head output is the right size
+        self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
+
+        # Freeze weights based on previously defined stats
+        until = self.layer_freezing[self.labeltype]
+        if until:
+            self.freeze_until(self.dna_encoder, until)
+            self.freeze_until(self.visual_encoder, until)
+
+        # Make sure optim is the right size
+        self.update_optimizer()
+
+        # Load parameters
+        self.load(f"{path}/latest.pt")
+
+
     def fit(self, train_dataset, final: bool = False):
         """Fit the model on a shuffled dataset for one epoch"""
         self.train() # Turn on the dropouts
@@ -282,7 +326,19 @@ class DNAVMM(nn.Module):
 
     def train_loop(self, train_dataset, eval_dataset):
         # Loop through class label types
-        for labeltype in self.class_values.keys():
+        label_options = [i for i in self.class_values.keys()]
+        
+        # If loaded from checkpoint, this value is already initialized
+        try:
+            label_options = label_options[label_options.index(self.labeltype):]
+            self.check_start = True
+            epochs = self.epoch_ordering[self.labeltype]
+            epoch_range = [i for i in range(epochs)][self.c_epoch:]
+        except AttributeError:
+            # Not a checkpoint
+            self.check_start = False
+
+        for labeltype in label_options:
             # Current type of class/label
             self.labeltype = labeltype
             epochs = self.epoch_ordering[labeltype] # Get number of epochs for the label
@@ -292,21 +348,27 @@ class DNAVMM(nn.Module):
                 # Freeze the bottom n layers of both encoder
                 self.freeze_until(self.dna_encoder, until)
                 self.freeze_until(self.visual_encoder, until)
+            
+            # Make sure a checkpoint load doesnt destoy the old class head
+            if not self.check_start:
+                # Replace final class head layer with a new output layer matching the number of classes
+                self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
+                # Create epoch range for new epoch loop
+                epoch_range = [i for i in range(epochs)]
 
-            # Replace final class head layer with a new output layer matching the number of classes
-            self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
-
-            # Make sure optim only optimizes trainable weights with requires_grad=true
-            self.update_optimizer()
+                # Make sure optim only optimizes trainable weights with requires_grad=true
+                self.update_optimizer()
 
             # Epoch loop
-            for epoch in range(epochs):
+            for epoch in epoch_range:
+                self.c_epoch = epoch + 1
                 # Shuffle dataset
-                train_dataset = train_dataset.shuffle()
+                if self.ds_rand:
+                    train_dataset = train_dataset.shuffle()
                 print(f"Epoch {epoch+1}/{epochs} for {labeltype}.")
 
                 # Check for final epoch when calling self.fit and evaluate.
-                if epoch + 1 == epochs:
+                if self.c_epoch == epochs:
                     train_correct, train_total, train_loss, train_preds, train_labels = self.fit(train_dataset=train_dataset, final=True)
                     eval_correct, eval_total, eval_loss, eval_preds, eval_labels = self.evaluate(eval_dataset=eval_dataset, final=True)
                 else:
@@ -318,6 +380,12 @@ class DNAVMM(nn.Module):
                 print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
                 self.eval_loss[epoch, :] = np.array(eval_loss)
                 print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
+
+                if self.c_epoch % 5 == 0:
+                    self.save(f"./{self.run_name}/")
+            
+            # After at least 1 epoch this needs a reset to make sure the class head is replaced
+            self.check_start = False
 
         # Compute and save the accuracy after training
         self.train_acc = train_correct / train_total
@@ -343,25 +411,35 @@ class DNAVMM(nn.Module):
         ax.legend()
         fig.savefig(f"{save_path}_loss.png")
 
-
     def save(self, path):
         # Save the weights
-        torch.save(self.state_dict(), path)
+        torch.save({
+            "model": self.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+        }, f"{path}/latest.pt")
 
         # Save the metrics in one file
-        metrics = {"train_loss": self.train_loss,
+        metrics = {"current_label": self.labeltype,
+                   "current_epoch": self.c_epoch,
+                   "train_loss": self.train_loss,
                    "train_acc": self.train_acc,
                    "train_f1": self.train_f1,
                    "eval_loss" : self.eval_loss,
                    "eval_acc": self.eval_acc,
                    "eval_f1": self.eval_f1,
-                   "epochs": [i for i in self.epoch_ordering.values()],
-                   "frozen_until": [i for i in self.layer_freezing.values()]
+                   "epochs": self.epoch_ordering,
+                   "frozen_until": self.layer_freezing,
+                   "hierarchical": self.hierarchical,
+                   "dataset_randomization": self.ds_rand,
+                   "augmentation": self.augmentation,
+                   "large_tokenizer": self.large_tokenizer,
         }
-        np.save(path + "_cls_species.npy", metrics)
+        np.save(f"{path}/model_metrics.npy", metrics)
     
     def load(self, path):
-        self.load_state_dict(torch.load(path))
+        checkpoint = torch.load(path)
+        self.load_state_dict(checkpoint["model"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
 
 if __name__ == "__main__":
     # Set seed for everything
@@ -375,17 +453,18 @@ if __name__ == "__main__":
     torch.backends.cudnn.benchmark = False
 
     options = sys.argv[1:]
+    run_name = options[0]
+    large_tokenizer = True if "large_tokenizer" in options else False
     hierarchical = True if "hierarchical" in options else False
     ds_randomization = True if "ds_rand" in options else False
     augmentation = True if "augment" in options else False
     
+    # Create save location directory
+    if not os.path.exists(f"./{run_name}/"):
+        os.mkdir(f"./{run_name}/")
+
     # If cache needs to be used
-    use_cache = False
-    
-    if use_cache:
-        cache_dir = "/data/s4501888/hf/datasets"
-    else:
-        cache_dir = None
+    cache_dir = os.getenv("cache_dir") if os.path.isdir(os.getenv("cache_dir")) else None
 
     # Train dataset
     train_dataset = load_dataset(
@@ -429,6 +508,21 @@ if __name__ == "__main__":
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
     n_species = len(uniq_species)
     
+    # Set is fully non-deterministic, so we fix that by using mapping files to class indices
+    if not os.path.exists("./class_indices/"):
+        os.mkdir("./class_indices/")
+        np.save("./class_indices/class.npy", class_dict)
+        np.save("./class_indices/order.npy", order_dict)
+        np.save("./class_indices/family.npy", family_dict)
+        np.save("./class_indices/genus.npy", genus_dict)
+        np.save("./class_indices/species.npy", species_dict)
+    else:
+        class_dict = np.load("./class_indices/class.npy", allow_pickle=True).item()
+        order_dict = np.load("./class_indices/order.npy", allow_pickle=True).item()
+        family_dict = np.load("./class_indices/family.npy", allow_pickle=True).item()
+        genus_dict = np.load("./class_indices/genus.npy", allow_pickle=True).item()
+        species_dict = np.load("./class_indices/species.npy", allow_pickle=True).item()
+
     if hierarchical:
         parameters = dict(
             lr = 5e-5,
@@ -463,12 +557,16 @@ if __name__ == "__main__":
                 "species": 9,
                 },
             k=6,
+            large_tokenizer=large_tokenizer,
+            hierarchical=hierarchical,
+            ds_randomization=ds_randomization,
+            augmentation=augmentation,
         )
     else:
         parameters = dict(
             lr = 5e-5,
-            steps_per_epoch=200,
-            batch_size=16,
+            steps_per_epoch=2,
+            batch_size=4,
             class_values = {
                 "species": n_species,
                 },
@@ -482,13 +580,18 @@ if __name__ == "__main__":
                 "species": None,
                 },
             k=6,
+            large_tokenizer=large_tokenizer,
+            hierarchical=hierarchical,
+            ds_randomization=ds_randomization,
+            augmentation=augmentation,
         )
 
     model = DNAVMM(
         cache_dir=cache_dir,
         params=parameters,
+        run_name = run_name,
     )
     model = model.to(device)
     model.train_loop(train_dataset, eval_dataset)
-    model.save("/local/mmeb_s4501888/model.weights")
+    model.save(f"./{run_name}/")
 
