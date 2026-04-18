@@ -120,8 +120,8 @@ class VisualEncoder(nn.Module):
 
         return logits
 
-    def fit(self, train_dataset):
-        """Fit the model on a shuffled batch of the dataset"""
+    def fit(self, train_dataset, final: bool = False):
+        """Fit the model on a shuffled dataset for one epoch."""
         self.train() # Turn on the dropouts
         prev = 0   # Previous index of the dataset
         train_loss = [] # List for the training loss
@@ -144,19 +144,21 @@ class VisualEncoder(nn.Module):
             logits = self.forward(images=images)
             loss = self.criterion(logits, labels)
 
-            # Compute the training metrics
-            prediction = torch.argmax(logits, dim=1)
-            train_correct += (prediction == labels).sum().item()
-            train_total += labels.size(0)
-            prediction_list.extend(prediction.cpu().detach().numpy())
-            labels_list.extend(labels.cpu().detach().numpy())
-
             # Backward pass
             loss.backward() 
             self.optimizer.step()
 
             # Save the loss
             train_loss.append(loss.item())
+
+            # Only calculate metrics for the final epoch
+            if final:
+                # Compute the training metrics
+                prediction = torch.argmax(logits, dim=1)
+                train_correct += (prediction == labels).sum().item()
+                train_total += labels.size(0)
+                prediction_list.extend(prediction.cpu().detach().numpy())
+                labels_list.extend(labels.cpu().detach().numpy())
 
             # Break the training loop when the set number of training steps are reached
             if timestep == self.steps_per_epoch - 1:
@@ -165,10 +167,13 @@ class VisualEncoder(nn.Module):
             # Reset the previous index of the dataset
             prev = idx
         
-        return train_correct, train_total, train_loss, prediction_list, labels_list
-    
+        if final:
+            return train_correct, train_total, train_loss, prediction_list, labels_list
+        else:
+            return train_loss
 
-    def evaluate(self, eval_dataset):
+
+    def evaluate(self, eval_dataset, final: bool = False):
         """Single evaluation run on the validation dataset for each epoch."""
         self.eval() # Turn off the dropouts
         prev = 0   # Previous index of the dataset
@@ -192,15 +197,17 @@ class VisualEncoder(nn.Module):
                 logits = self.forward(images=images)
                 loss = self.criterion(logits, labels)
 
-                # Compute the validation metrics
-                prediction = torch.argmax(logits, dim=1)
-                eval_correct += (prediction == labels).sum().item()
-                eval_total += labels.size(0)
-                prediction_list.extend(prediction.cpu().detach().numpy())
-                labels_list.extend(labels.cpu().detach().numpy())
-
                 # Save the loss
                 eval_loss.append(loss.item())
+
+                # Only calculate metrics for the final epoch
+                if final:
+                    # Compute the validation metrics
+                    prediction = torch.argmax(logits, dim=1)
+                    eval_correct += (prediction == labels).sum().item()
+                    eval_total += labels.size(0)
+                    prediction_list.extend(prediction.cpu().detach().numpy())
+                    labels_list.extend(labels.cpu().detach().numpy())
 
                 # Break the validation loop when the set number of training steps are reached
                 if timestep == self.steps_per_epoch - 1:
@@ -209,7 +216,11 @@ class VisualEncoder(nn.Module):
                 # Reset the previous index of the dataset
                 prev = idx
 
-        return eval_correct, eval_total, eval_loss, prediction_list, labels_list
+        if final:
+            return eval_correct, eval_total, eval_loss, prediction_list, labels_list
+        
+        else:
+            return eval_loss
 
     def freeze_until(self, model, until):
         """Freezes the weights of a given model according to the given the value. If until=1, first 2 layers are frozen."""
@@ -235,23 +246,32 @@ class VisualEncoder(nn.Module):
                 # Freeze the bottom n layers
                 self.freeze_until(self.visual_encoder, until)
 
-                # Set the optimizer to only optimise on non-frozen weights
-                self.update_optimizer()
-
             # Replace the final class head layer with a new output layer that matches the number of classes
             self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
 
+            # Set the optimizer to only optimise trainable weights with requires_grad=True
+            self.update_optimizer()
+
             # Epoch loop
             for epoch in range(epochs):
-                # Shuffle the training dataset
-                train_dataset = train_dataset.shuffle()
+                if True:   
+                    # Shuffle the training dataset
+                    train_dataset = train_dataset.shuffle()
                 print(f"Epoch {epoch+1}/{epochs} for {labeltype}.")
 
-                # Train on the dataset for an entire epoch
-                train_correct, train_total, train_loss, train_preds, train_labels = self.fit(train_dataset=train_dataset)
+                # Check for the final epoch when calling self.fit and self.evaluate
+                # Final epoch
+                if epoch + 1 == epochs:
+                    # Train on the dataset for an entire epoch
+                    train_correct, train_total, train_loss, train_preds, train_labels = self.fit(train_dataset=train_dataset, final=True)
 
-                # Test the validation dataset for an entire epoch
-                eval_correct, eval_total, eval_loss, eval_preds, eval_labels = self.evaluate(eval_dataset=eval_dataset)
+                    # Test the validation dataset for an entire epoch
+                    eval_correct, eval_total, eval_loss, eval_preds, eval_labels = self.evaluate(eval_dataset=eval_dataset, final=True)
+
+                # Every epoch
+                else:
+                    train_loss = self.fit(train_dataset=train_dataset, final=False)
+                    eval_loss = self.evaluate(eval_dataset=eval_dataset, final=False)
 
                 # Save and print the training metrics for the current epoch
                 self.train_loss[epoch, :] = np.array(train_loss)
@@ -317,11 +337,16 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    # Set the cache directory location
-    cache_dir = "/data/s4514998/hf/datasets"
+    # Enable cache directory, False for no cache directory
+    cache_check = True
+    if cache_check:
+        # Set the cache directory location
+        cache_dir = "/data/s4514998/hf/datasets"
+    else:
+        cache_dir = None
 
     # Enable hierarchical training, False for singular species level
-    hierachical = True
+    hierarchical = True
 
     # Load the BIOSCAN5M train dataset
     train_dataset = load_dataset(
@@ -330,7 +355,7 @@ if __name__ == "__main__":
         split="train", 
         trust_remote_code=True,
         token=apitoken,
-        cache_dir="/data/s4514998/hf/datasets"
+        cache_dir=cache_dir
         )
     train_dataset = train_dataset.with_format("torch", device=device)
 
@@ -341,7 +366,7 @@ if __name__ == "__main__":
         split="validation", 
         trust_remote_code=True, 
         token=apitoken,
-        cache_dir="/data/s4514998/hf/datasets"
+        cache_dir=cache_dir
         )
     eval_dataset = eval_dataset.with_format("torch", device=device)
 
@@ -366,7 +391,7 @@ if __name__ == "__main__":
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
     n_species = len(uniq_species)
 
-    if hierachical:
+    if hierarchical:
         # Initialize parameters to perform hierarchical training
         parameters = dict(
             lr = 5e-5,
@@ -389,9 +414,9 @@ if __name__ == "__main__":
             epoch_ordering = {
                 "class": 2,
                 "order": 4,
-                "family": 25,
-                "genus": 50,
-                "species": 200
+                "family": 10,
+                "genus": 25,
+                "species": 100
                 }, # Number of epochs for each step.
             layer_freezing = {
                 "class": None,
@@ -415,7 +440,7 @@ if __name__ == "__main__":
                 "species": species_dict,
                 },
             epoch_ordering = {
-                "species": 200
+                "species": 100
                 }, # Number of epochs for each step.
             layer_freezing = {
                 "species": None,
