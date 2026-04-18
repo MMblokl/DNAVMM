@@ -1,7 +1,5 @@
 import torch
 from torch import nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
 import torchvision.transforms as T
 from datasets import load_dataset
 from transformers import AutoModel, set_seed, AutoImageProcessor
@@ -22,11 +20,13 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class VisualEncoder(nn.Module):
     def __init__(self,
                 params: dict,
+                run_name: str,
                 v_enc: str = "facebook/dinov2-small",
                 i_processor: str = "facebook/dinov2-small",
                 cache_dir: str | bool = False,
-                ds_randomization: bool = False | True,
-                augmentation: bool = False | True
+                ds_randomization: bool = False,
+                augmentation: bool = False,
+                hierarchical: bool = False
                 ):
 
         super(VisualEncoder, self).__init__()
@@ -66,12 +66,14 @@ class VisualEncoder(nn.Module):
 
         # Initialize whether to use dataset randomization
         self.ds_randomization = ds_randomization
-
         # Initialize whether to use image augmentation
         self.augmentation = augmentation
+        # Whether the training scheme is hierarchical for logging
+        self.hierarchical = hierarchical
 
         # Initialize the total epochs
         total_epochs = sum(self.epoch_ordering.values())
+        self.run_name = run_name
 
         # Initialize the hardcoded output size of DINOV2_small
         v_enc_size = 384
@@ -120,6 +122,9 @@ class VisualEncoder(nn.Module):
         self.train_f1 = 0
         self.eval_f1 = 0
 
+        if os.path.exists(f"./{run_name}/latest.pt"):
+            self.start_from_checkpoint(f"./{run_name}/")
+
     def collate_fn(self, batch, train: bool = False):
         """Custom collation function for the dataset, extract images from the batch and process them with the AutoImageProcessor.
 
@@ -154,6 +159,37 @@ class VisualEncoder(nn.Module):
         logits = self.class_head(embedding)
 
         return logits
+
+
+    def start_from_checkpoint(self, path):
+        # Load saved metrics
+        metrics = np.load(f"{path}/model_metrics.npy", allow_pickle=True).item()
+
+        self.train_loss = metrics["train_loss"]
+        self.train_acc = metrics["train_acc"]
+        self.labeltype = metrics["current_label"]
+        self.c_epoch = metrics["current_epoch"]
+        self.train_f1 = metrics["train_f1"]
+        self.eval_loss = metrics["eval_loss"]
+        self.eval_acc = metrics["eval_acc"]
+        self.eval_f1 = metrics["eval_f1"]
+        self.layer_freezing = metrics["frozen_until"]
+
+        # Reconstruct the weights to match the previous state
+        # Make sure class head output is the right size
+        self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
+
+        # Freeze weights based on previously defined stats
+        until = self.layer_freezing[self.labeltype]
+        if until:
+            self.freeze_until(self.visual_encoder, until)
+
+        # Make sure optim is the right size
+        self.update_optimizer()
+
+        # Load parameters
+        self.load(f"{path}/latest.pt")
+
 
     def fit(self, train_dataset, final: bool = False):
         """Fit the model on a shuffled dataset for one epoch."""
@@ -272,7 +308,19 @@ class VisualEncoder(nn.Module):
 
     def train_loop(self, train_dataset, eval_dataset):
         """Loop through the class and label types"""
-        for labeltype in self.class_values.keys():
+        label_options = [i for i in self.class_values.keys()]
+        
+        # If loaded from checkpoint, this value is already initialized
+        try:
+            label_options = label_options[label_options.index(self.labeltype):]
+            self.check_start = True
+            epochs = self.epoch_ordering[self.labeltype]
+            epoch_range = [i for i in range(epochs)][self.c_epoch:]
+        except AttributeError:
+            # Not a checkpoint
+            self.check_start = False
+        
+        for labeltype in label_options:
             self.labeltype = labeltype # Set the current label type
             epochs = self.epoch_ordering[labeltype] # Get the number of epochs for the label
             
@@ -281,14 +329,20 @@ class VisualEncoder(nn.Module):
                 # Freeze the bottom n layers
                 self.freeze_until(self.visual_encoder, until)
 
-            # Replace the final class head layer with a new output layer that matches the number of classes
-            self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
+            # Make sure a checkpoint load doesnt destoy the old class head
+            if not self.check_start:
+                # Replace the final class head layer with a new output layer that matches the number of classes
+                self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
 
-            # Set the optimizer to only optimise trainable weights with requires_grad=True
-            self.update_optimizer()
+                # Create epoch range for new epoch loop
+                epoch_range = [i for i in range(epochs)]
+
+                # Set the optimizer to only optimise trainable weights with requires_grad=True
+                self.update_optimizer()
 
             # Epoch loop
-            for epoch in range(epochs):
+            for epoch in epoch_range:
+                self.c_epoch = epoch + 1
                 print(f"Epoch {epoch+1}/{epochs} for {labeltype}.")
 
                 # Check whether to perform training dataset randomization with .shuffle()
@@ -299,7 +353,7 @@ class VisualEncoder(nn.Module):
 
                 # Check for the final epoch when calling self.fit and self.evaluate
                 # Final epoch
-                if epoch + 1 == epochs:
+                if self.c_epoch == epochs:
                     # Train on the dataset for an entire epoch
                     train_correct, train_total, train_loss, train_preds, train_labels = self.fit(train_dataset=train_dataset, final=True)
 
@@ -314,10 +368,15 @@ class VisualEncoder(nn.Module):
                 # Save and print the training metrics for the current epoch
                 self.train_loss[epoch, :] = np.array(train_loss)
                 print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
-
                 # Save and print the validation metrics for the current epoch
                 self.eval_loss[epoch, :] = np.array(eval_loss)
                 print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
+
+                if self.c_epoch % 5 == 0:
+                    self.save(f"./{self.run_name}/")
+            
+            # After at least 1 epoch this needs a reset to make sure the class head is replaced
+            self.check_start = False
             
         # Compute and save the accuracy after training
         self.train_acc = train_correct / train_total
@@ -347,22 +406,32 @@ class VisualEncoder(nn.Module):
 
     def save(self, path):
         # Save the weights
-        torch.save(self.state_dict(), path)
+        torch.save({
+            "model": self.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+        }, f"{path}/latest.pt")
 
         # Save the metrics in one file
-        metrics = {"train_loss": self.train_loss,
+        metrics = {"current_label": self.labeltype,
+                   "current_epoch": self.c_epoch,
+                   "train_loss": self.train_loss,
                    "train_acc": self.train_acc,
-                   "train_f1":  self.train_f1,
+                   "train_f1": self.train_f1,
                    "eval_loss" : self.eval_loss,
                    "eval_acc": self.eval_acc,
                    "eval_f1": self.eval_f1,
-                   "epochs": [i for i in self.epoch_ordering.values()],
-                   "frozen_until": [i for i in self.layer_freezing.values()]
+                   "epochs": self.epoch_ordering,
+                   "frozen_until": self.layer_freezing,
+                   "hierarchical": self.hierarchical,
+                   "dataset_randomization": self.ds_randomization,
+                   "augmentation": self.augmentation,
         }
-        np.save(path + "_cls_species.npy", metrics)
+        np.save(f"{path}/model_metrics.npy", metrics)
     
     def load(self, path):
-        self.load_state_dict(torch.load(path))
+        checkpoint = torch.load(path)
+        self.load_state_dict(checkpoint["model"])
+        self.optimizer.load_state_dict(checkpoint["optimizer"])
 
     def visualize_augment(self, train_dataset, save_path, n_images):
         # Create the output directory for the image plots
@@ -407,6 +476,7 @@ if __name__ == "__main__":
     torch.backends.cudnn.benchmark = False
 
     options = sys.argv[1:]
+    run_name = options[0]
     # Enable hierarchical training, False for singular species level
     hierarchical = True if "hierarchical" in options else False
 
@@ -417,12 +487,11 @@ if __name__ == "__main__":
     augmentation = True if "augment" in options else False
 
     # Enable cache directory, False for no cache directory
-    cache_check = True
-    if cache_check:
-        # Set the cache directory location
-        cache_dir = "/data/s4514998/hf/datasets"
-    else:
-        cache_dir = None
+    cache_dir = os.getenv("cache_dir") if os.path.isdir(os.getenv("cache_dir")) else None
+
+    # Create save location directory
+    if not os.path.exists(f"./{run_name}/"):
+        os.mkdir(f"./{run_name}/")
 
     # Load the BIOSCAN5M train dataset
     train_dataset = load_dataset(
@@ -466,13 +535,29 @@ if __name__ == "__main__":
     uniq_species = set.union(set(train_dataset["species"]), set(train_dataset["species"])) # Species taxonomic level
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
     n_species = len(uniq_species)
+    
+    # Set is fully non-deterministic, so we fix that by using mapping files to class indices
+    if not os.path.exists("./class_indices/"):
+        os.mkdir("./class_indices/")
+        np.save("./class_indices/class.npy", class_dict)
+        np.save("./class_indices/order.npy", order_dict)
+        np.save("./class_indices/family.npy", family_dict)
+        np.save("./class_indices/genus.npy", genus_dict)
+        np.save("./class_indices/species.npy", species_dict)
+    else:
+        class_dict = np.load("./class_indices/class.npy", allow_pickle=True).item()
+        order_dict = np.load("./class_indices/order.npy", allow_pickle=True).item()
+        family_dict = np.load("./class_indices/family.npy", allow_pickle=True).item()
+        genus_dict = np.load("./class_indices/genus.npy", allow_pickle=True).item()
+        species_dict = np.load("./class_indices/species.npy", allow_pickle=True).item()
+
 
     if hierarchical:
         # Initialize parameters to perform hierarchical training
         parameters = dict(
             lr = 5e-5,
-            steps_per_epoch=200,
-            batch_size=16,
+            steps_per_epoch=2,
+            batch_size=4,
             class_values = {
                 "class": n_class,
                 "order": n_orders,
@@ -527,8 +612,10 @@ if __name__ == "__main__":
     model = VisualEncoder(
         cache_dir=cache_dir,
         params=parameters,
+        run_name=run_name,
         ds_randomization=ds_randomization,
-        augmentation=augmentation
+        augmentation=augmentation,
+        hierarchical=hierarchical,
     )
     model = model.to(device)
     model.train_loop(train_dataset, eval_dataset)

@@ -1,6 +1,6 @@
 import torch.nn as nn
-import torch.nn.functional as F
 import torch
+import torchvision.transforms as T
 from transformers import AutoModel, AutoTokenizer, set_seed, AutoImageProcessor
 from datasets import load_dataset
 import numpy as np
@@ -28,6 +28,10 @@ class DNAVMM(nn.Module):
             d_tokenizer: str = "zhihan1996/DNA_bert_6",
             i_processor: str = 'facebook/dinov2-small',
             cache_dir: str | bool = False,
+            ds_randomization: bool = False,
+            augmentation: bool = False,
+            hierarchical: bool = False,
+            large_tokenizer: bool = False,
         ):
         
         super(DNAVMM, self).__init__()
@@ -84,10 +88,10 @@ class DNAVMM(nn.Module):
         self.batch_size = params["batch_size"]
         self.k = params["k"]
 
-        self.large_tokenizer = params["large_tokenizer"]
-        self.hierarchical = params["hierarchical"]
-        self.ds_rand = params["ds_randomization"]
-        self.augmentation = params["augmentation"]
+        self.large_tokenizer = large_tokenizer
+        self.hierarchical = hierarchical
+        self.ds_rand = ds_randomization
+        self.augmentation = augmentation
 
         total_epochs = sum(self.epoch_ordering.values())
         self.run_name = run_name
@@ -99,6 +103,24 @@ class DNAVMM(nn.Module):
         if self.large_tokenizer:
             # Use mode with larger self-attention matrix
             self.enlargen_tokenizer()
+
+        # Augmentation Composer
+        self.augment = T.Compose([
+            # Convert the image to float32
+            T.ConvertImageDtype(torch.float32),
+
+            # Randomly flip the image
+            T.RandomHorizontalFlip(), # 50% chance to flip horizontal
+            T.RandomVerticalFlip(), # 50% chance to flip vertical
+
+            # Randomly apply gaussian noise to the image
+            T.RandomApply(
+                [T.v2.GaussianNoise(sigma=0.075)],
+            p=0.5), # 50% to apply gaussian gaussian noise
+
+            # Convert the image back to int8
+            T.ConvertImageDtype(torch.uint8)
+        ])
 
         # Fully connected classification head
         self.class_head = nn.Sequential(
@@ -150,6 +172,11 @@ class DNAVMM(nn.Module):
             torch.tensor: The stacked tensor of the batch of images.
         """
         images = batch["image"]
+
+        if self.augmentation:
+            # Apply the image augmentation method to every image
+            images = [self.augment(img) for img in images]
+
         images = self.i_processor(images=images, return_tensors="pt").to(device)
         labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
         barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
@@ -557,10 +584,6 @@ if __name__ == "__main__":
                 "species": 9,
                 },
             k=6,
-            large_tokenizer=large_tokenizer,
-            hierarchical=hierarchical,
-            ds_randomization=ds_randomization,
-            augmentation=augmentation,
         )
     else:
         parameters = dict(
@@ -580,16 +603,16 @@ if __name__ == "__main__":
                 "species": None,
                 },
             k=6,
-            large_tokenizer=large_tokenizer,
-            hierarchical=hierarchical,
-            ds_randomization=ds_randomization,
-            augmentation=augmentation,
         )
 
     model = DNAVMM(
         cache_dir=cache_dir,
         params=parameters,
         run_name = run_name,
+        ds_randomization=ds_randomization,
+        augmentation=augmentation,
+        hierarchical=hierarchical,
+        large_tokenizer=large_tokenizer
     )
     model = model.to(device)
     model.train_loop(train_dataset, eval_dataset)
