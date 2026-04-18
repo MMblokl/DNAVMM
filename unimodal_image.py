@@ -10,6 +10,7 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 from sklearn.metrics import f1_score
+import sys
 
 load_dotenv()
 apitoken =os.getenv("API_KEY")
@@ -111,9 +112,6 @@ class VisualEncoder(nn.Module):
     def forward(self, images):
         # CLS for embedding
         embedding = self.visual_encoder(**images).last_hidden_state[:,0]
-
-        # Mean pooling for embedding
-        #embedding = self.visual_encoder(**images).last_hidden_state.mean(dim=1)
 
         # Pass the embedding through the model
         logits = self.class_head(embedding)
@@ -337,6 +335,16 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+    options = sys.argv[1:]
+    # Enable hierarchical training, False for singular species level
+    hierarchical = True if "hierarchical" in options else False
+
+    # Enable dataset randomization, False for no randomization
+    ds_randomization = True if "ds_rand" in options else False
+
+    # Enable image augmentation, False for no image augmention
+    augmentation = True if "augment" in options else False
+
     # Enable cache directory, False for no cache directory
     cache_check = True
     if cache_check:
@@ -344,9 +352,6 @@ if __name__ == "__main__":
         cache_dir = "/data/s4514998/hf/datasets"
     else:
         cache_dir = None
-
-    # Enable hierarchical training, False for singular species level
-    hierarchical = True
 
     # Load the BIOSCAN5M train dataset
     train_dataset = load_dataset(
