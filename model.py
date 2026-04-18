@@ -6,6 +6,7 @@ from datasets import load_dataset
 import numpy as np
 import random
 import os
+import sys
 from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 from sklearn.metrics import f1_score
@@ -373,8 +374,11 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    # Set to true to set to hierarchical training.
-    hierarchical = False
+    options = sys.argv[1:]
+    hierarchical = True if "hierarchical" in options else False
+    ds_randomization = True if "ds_rand" in options else False
+    augmentation = True if "augment" in options else False
+    
     # If cache needs to be used
     use_cache = False
     
