@@ -13,4 +13,5 @@ dependencies = [
     "torch==2.7.0",
     "torchvision==0.22.0",
     "transformers>=5.5.4",
+    "triton==3.3.0",
 ]

@@ -467,6 +467,11 @@ class DNAVMM(nn.Module):
         checkpoint = torch.load(path)
         self.load_state_dict(checkpoint["model"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
+        # Some of the values arent kept op proper device, this is the best way to fix
+        for state in self.optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(device)
 
 if __name__ == "__main__":
     # Set seed for everything
