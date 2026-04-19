@@ -31,7 +31,6 @@ class DNAVMM(nn.Module):
             ds_randomization: bool = False,
             augmentation: bool = False,
             hierarchical: bool = False,
-            large_tokenizer: bool = False,
         ):
         
         super(DNAVMM, self).__init__()
@@ -88,7 +87,6 @@ class DNAVMM(nn.Module):
         self.batch_size = params["batch_size"]
         self.k = params["k"]
 
-        self.large_tokenizer = large_tokenizer
         self.hierarchical = hierarchical
         self.ds_rand = ds_randomization
         self.augmentation = augmentation
@@ -100,9 +98,6 @@ class DNAVMM(nn.Module):
         d_enc_size = 768
         v_enc_size = 384
 
-        if self.large_tokenizer:
-            # Use mode with larger self-attention matrix
-            self.enlargen_tokenizer()
 
         # Augmentation Composer
         self.augment = T.Compose([
@@ -151,16 +146,6 @@ class DNAVMM(nn.Module):
         # If the weights exist, we have to run from the checkpoint
         if os.path.exists(f"./{run_name}/latest.pt"):
             self.start_from_checkpoint(f"./{run_name}/")
-
-    def enlargen_tokenizer(self):
-        # Double size of the model for 1024 input size of DNA
-        self.dna_tokenizer.model_max_length = 1024
-        self.dna_encoder.config.max_positional_embeddings = 1024
-        self.dna_encoder.base_model.embeddings.position_ids = torch.arange(1024).expand((1,-1))
-        self.dna_encoder.base_model.embeddings.token_type_ids = torch.zeros(1024).expand((1,-1))
-        orig_pos_emb = self.dna_encoder.base_model.embeddings.position_embeddings.weight
-        self.dna_encoder.base_model.embeddings.position_embeddings.weight = torch.nn.Parameter(torch.cat((orig_pos_emb, orig_pos_emb)))
-
 
     def collate_fn(self, batch, train: bool = True):
         """Custom collation function for dataloader, extract images from the batch and pad them with the largest width from the widest image.
@@ -460,7 +445,6 @@ class DNAVMM(nn.Module):
                    "hierarchical": self.hierarchical,
                    "dataset_randomization": self.ds_rand,
                    "augmentation": self.augmentation,
-                   "large_tokenizer": self.large_tokenizer,
         }
         np.save(f"{path}/model_metrics.npy", metrics)
     
@@ -487,7 +471,6 @@ if __name__ == "__main__":
 
     options = sys.argv[1:]
     run_name = options[0]
-    large_tokenizer = True if "large_tokenizer" in options else False
     hierarchical = True if "hierarchical" in options else False
     ds_randomization = True if "ds_rand" in options else False
     augmentation = True if "augment" in options else False
@@ -618,7 +601,6 @@ if __name__ == "__main__":
         ds_randomization=ds_randomization,
         augmentation=augmentation,
         hierarchical=hierarchical,
-        large_tokenizer=large_tokenizer
     )
     model = model.to(device)
     model.train_loop(train_dataset, eval_dataset)

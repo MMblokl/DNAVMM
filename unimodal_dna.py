@@ -1,47 +1,13 @@
 import torch
-# print("CUDA available:", torch.cuda.is_available())
-# print("CUDA version:", torch.version.cuda)
-# print("Device count:", torch.cuda.device_count())
-
-
-        # scheduler = get_linear_schedule_with_warmup(
-        #     optimizer,
-        #     num_warmup_steps=100,
-        #     num_training_steps=len(dataloader) * epochs
-        # )
-        # scaler = torch.amp.GradScaler()
-                # # Backpropagation
-                # scaler.scale(loss).backward()
-                # scaler.unscale_(optimizer)
-
-                # # Prevent exploding gradients
-                # torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
-
-                # # Update weights
-                # scaler.step(optimizer)
-                # scaler.update()
-                # scheduler.step()
-
-
 import os
 import sys
 import numpy as np
-import time
-import json
 import random
-
-
 from transformers import AutoTokenizer, AutoModel, set_seed
 from transformers import get_linear_schedule_with_warmup
-
 from torch import nn
-from torch.optim import AdamW
-from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
-
 from sklearn.metrics import f1_score
 import matplotlib.pyplot as plt
-
 from datasets import load_dataset
 from dotenv import load_dotenv
 
@@ -63,7 +29,6 @@ class DNAEncoder(nn.Module):
             ds_randomization: bool = False,
             augmentation: bool = False,
             hierarchical: bool = False,
-            large_tokenizer: bool = False,
         ):
         super(DNAEncoder, self).__init__()
         
@@ -101,7 +66,6 @@ class DNAEncoder(nn.Module):
         self.batch_size = params["batch_size"]
         self.k = params["k"]
 
-        self.large_tokenizer = large_tokenizer
         self.hierarchical = hierarchical
         self.ds_rand = ds_randomization
         self.augmentation = augmentation
@@ -449,7 +413,6 @@ class DNAEncoder(nn.Module):
                    "hierarchical": self.hierarchical,
                    "dataset_randomization": self.ds_rand,
                    "augmentation": self.augmentation,
-                   "large_tokenizer": self.large_tokenizer,
         }
         np.save(f"{path}/model_metrics.npy", metrics)
     
@@ -463,6 +426,19 @@ class DNAEncoder(nn.Module):
             for k, v in state.items():
                 if torch.is_tensor(v):
                     state[k] = v.to(device)
+
+
+    def plot_metrics(self, save_path):
+        # Set the number of epochs used for the plots
+        epochs = range(1, self.epoch_ordering["species"]+1)
+  
+        # Plot the loss metrics for the model training and validation and save the figure
+        fig, ax = plt.subplots()
+        ax.plot(epochs, self.train_loss.mean(axis=1)[:-1][0:self.epoch_ordering["species"]], label="Train Loss")
+        ax.plot(epochs, self.eval_loss.mean(axis=1)[:-1][0:self.epoch_ordering["species"]], label="Validation Loss")
+        ax.set(xlabel="Epochs", ylabel="Loss", title="Training vs Validation Loss")
+        ax.legend()
+        fig.savefig(f"{save_path}_loss.png")
 
 if __name__ == "__main__":
     # Set seed for everything
