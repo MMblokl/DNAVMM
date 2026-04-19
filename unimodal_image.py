@@ -130,6 +130,7 @@ class VisualEncoder(nn.Module):
 
         Args:
             batch(dict): The batch containing the data subset
+            train (boolean): Training mode yes/no.
 
         Returns:
             torch.tensor: The stacked tensor of the batch of images.
@@ -138,7 +139,8 @@ class VisualEncoder(nn.Module):
         images = batch["image"]
 
         # Determine whether to perform image augmentations on the training images
-        if self.augmentation:
+        # If we are in evaluation mode this is turned off
+        if self.augmentation and train:
             # Apply the image augmentation method to every image
             images = [self.augment(img) for img in images]
 
@@ -244,7 +246,7 @@ class VisualEncoder(nn.Module):
             return train_loss
 
 
-    def evaluate(self, eval_dataset, final: bool = False):
+    def evaluate(self, eval_dataset, final: bool = True):
         """Single evaluation run on the validation dataset for each epoch."""
         self.eval() # Turn off the dropouts
         prev = 0   # Previous index of the dataset
@@ -561,8 +563,8 @@ if __name__ == "__main__":
         # Initialize parameters to perform hierarchical training
         parameters = dict(
             lr = 5e-5,
-            steps_per_epoch=2,
-            batch_size=4,
+            steps_per_epoch=200,
+            batch_size=16,
             class_values = {
                 "class": n_class,
                 "order": n_orders,

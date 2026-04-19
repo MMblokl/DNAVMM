@@ -162,18 +162,19 @@ class DNAVMM(nn.Module):
         self.dna_encoder.base_model.embeddings.position_embeddings.weight = torch.nn.Parameter(torch.cat((orig_pos_emb, orig_pos_emb)))
 
 
-    def collate_fn(self, batch):
+    def collate_fn(self, batch, train: bool = True):
         """Custom collation function for dataloader, extract images from the batch and pad them with the largest width from the widest image.
 
         Args:
             batch(dict): The batch containing the data subset
+            train (boolean): Training mode yes/no.
 
         Returns:
             torch.tensor: The stacked tensor of the batch of images.
         """
         images = batch["image"]
 
-        if self.augmentation:
+        if self.augmentation and train:
             # Apply the image augmentation method to every image
             images = [self.augment(img) for img in images]
 
@@ -300,7 +301,7 @@ class DNAVMM(nn.Module):
         with torch.no_grad():  # Disable gradient computation for evaluation
             for timestep, idx in enumerate(range(self.batch_size, len(eval_dataset), self.batch_size)):
                 # Collate the dataset to get the batches needed to evaluate the model
-                batch = self.collate_fn(eval_dataset[prev:idx])
+                batch = self.collate_fn(eval_dataset[prev:idx], train=False)
                         
                 # Get the images and labels from the current batch
                 images = batch["images"]
@@ -593,8 +594,8 @@ if __name__ == "__main__":
     else:
         parameters = dict(
             lr = 5e-5,
-            steps_per_epoch=2,
-            batch_size=4,
+            steps_per_epoch=200,
+            batch_size=16,
             class_values = {
                 "species": n_species,
                 },
