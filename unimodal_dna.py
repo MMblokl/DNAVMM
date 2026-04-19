@@ -118,7 +118,6 @@ class DNAEncoder(nn.Module):
         """
 
         labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
-        
         if self.augmentation:
             barcodes = self.kmer_crop(batch["dna_barcode"])
         else:
@@ -142,7 +141,7 @@ class DNAEncoder(nn.Module):
         if center:
             starts = [(len(sequence) - max_length) // 2 for sequence in barcodes]            
         else:
-            starts = [np.random.randint(0, len(sequence) - max_length) if len(sequence) > max_length - 1 else 0 for sequence in barcodes]
+            starts = [np.random.randint(0, len(sequence) - max_length) if len(sequence) > max_length else 0 for sequence in barcodes]
         
         crops = [seq[start:start + max_length] for start, seq in zip(starts, barcodes)]
         kmer_crops = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in crops]

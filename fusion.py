@@ -162,15 +162,38 @@ class DNAVMM(nn.Module):
         if self.augmentation and train:
             # Apply the image augmentation method to every image
             images = [self.augment(img) for img in images]
+            barcodes = self.kmer_crop(batch["barcodes"])
+        else:
+            barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
 
         images = self.i_processor(images=images, return_tensors="pt").to(device)
         labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
-        barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
         
         return {"images": images,
                 "labels": torch.tensor(labels).long().to(device),
                 "barcodes": barcodes}
    
+
+    def kmer_crop(self, barcodes, max_length=510, center: bool = False):    
+        """Crop a random portion of kmers from the barcode.
+        
+        Args:
+            barcodes (list): List of DNA barcodes
+            max_length (integer): Maximum kmers to output, standard 510.
+        
+        Returns:
+            List of kmer crop kmers.
+        """
+        if center:
+            starts = [(len(sequence) - max_length) // 2 for sequence in barcodes]            
+        else:
+            starts = [np.random.randint(0, len(sequence) - max_length) if len(sequence) > max_length else 0 for sequence in barcodes]
+        
+        crops = [seq[start:start + max_length] for start, seq in zip(starts, barcodes)]
+        kmer_crops = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in crops]
+        return kmer_crops
+
+
     def forward(self, images, dna):
         #v_embedding = self.visual_encoder(images).last_hidden_state.mean(dim=1)
         #d_embedding = self.dna_encoder(**dna).last_hidden_state.mean(dim=1)
