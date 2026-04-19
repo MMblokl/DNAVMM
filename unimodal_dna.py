@@ -57,8 +57,8 @@ class DNAEncoder(nn.Module):
             self,
             params: dict,
             run_name: str,
-            d_enc: str = "bioscan-ml/BarcodeBERT",
-            d_tokenizer: str = "bioscan-ml/BarcodeBERT",
+            d_enc: str = "zhihan1996/DNA_bert_6",
+            d_tokenizer: str = "zhihan1996/DNA_bert_6",
             cache_dir: str | bool = False,
             ds_randomization: bool = False,
             augmentation: bool = False,
@@ -87,7 +87,6 @@ class DNAEncoder(nn.Module):
             self.dna_tokenizer = AutoTokenizer.from_pretrained(
                 d_tokenizer,
                 token=apitoken,
-                trust_remote_code=True,
             )
         
         # init parameters
@@ -156,11 +155,11 @@ class DNAEncoder(nn.Module):
 
         labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
         
-        #if self.augmentation:
-        #    barcodes = self.kmer_crop(batch["dna_barcode"])
-        #else:
-        #barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
-        barcodes = batch["dna_barcode"]
+        if self.augmentation:
+            barcodes = self.kmer_crop(batch["dna_barcode"])
+        else:
+            barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
+
 
         return {"labels": torch.tensor(labels).long().to(device),
                 "barcodes": barcodes}
@@ -234,7 +233,7 @@ class DNAEncoder(nn.Module):
 
     def forward(self, dna):
         # CLS token as embedding
-        embedding = self.dna_encoder(input_ids=dna).last_hidden_state[:,0]
+        embedding = self.dna_encoder(**dna).last_hidden_state[:,0]
         logits = self.class_head(embedding)
 
         return logits
@@ -306,9 +305,8 @@ class DNAEncoder(nn.Module):
             # Single out data
             labels = batch["labels"]
             barcodes = batch["barcodes"]
-            outputs = [self.dna_tokenizer(barcode, return_tensors = 'pt', padding=True, truncation=True)["input_ids"] for barcode in barcodes]
-            tokenized_barcodes = torch.stack(outputs).to(device)
-            
+            tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True, truncation=True).to(device)
+
             # Calculate loss
             logits = self.forward(dna=tokenized_barcodes)
             loss = self.criterion(logits, labels)
