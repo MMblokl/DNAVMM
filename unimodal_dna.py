@@ -154,32 +154,35 @@ class DNAEncoder(nn.Module):
         """
 
         labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
-        barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
         
         if self.augmentation:
-            barcodes = self.kmer_crop(barcodes)
+            barcodes = self.kmer_crop(batch["dna_barcode"])
+        else:
+            barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
+
 
         return {"labels": torch.tensor(labels).long().to(device),
                 "barcodes": barcodes}
 
 
-    def kmer_crop(self, kmers, max_length=510, center: bool = False):    
+    def kmer_crop(self, barcodes, max_length=510, center: bool = False):    
         """Crop a random portion of kmers from the barcode.
         
         Args:
-            kmers (list): List of kmer strings
+            barcodes (list): List of DNA barcodes
             max_length (integer): Maximum kmers to output, standard 510.
         
         Returns:
             List of kmer crop kmers.
         """
         if center:
-            start = (len(kmers) - max_length) // 2
+            starts = [(len(sequence) - max_length) // 2 for sequence in barcodes]            
         else:
-            start = np.random.randint(0, len(kmers) - max_length)
-        crop = kmers[start:start + max_length]
-
-        return crop
+            starts = [np.random.randint(0, len(sequence) - max_length) for sequence in barcodes]
+        
+        crops = [seq[start:start + max_length] for start, seq in zip(starts, barcodes)]
+        kmer_crops = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in crops]
+        return kmer_crops
         
 
     def start_from_checkpoint(self, path):
@@ -300,13 +303,12 @@ class DNAEncoder(nn.Module):
             batch = self.collate_fn(train_dataset[prev:idx])
 
             # Single out data
-            images = batch["images"]
             labels = batch["labels"]
             barcodes = batch["barcodes"]
             tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True, truncation=True).to(device)
 
             # Calculate loss
-            logits = self.forward(images=images, dna=tokenized_barcodes)
+            logits = self.forward(dna=tokenized_barcodes)
             loss = self.criterion(logits, labels)
             
             # Backwards pass
