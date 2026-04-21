@@ -452,16 +452,23 @@ if __name__ == "__main__":
 
     options = sys.argv[1:]
     run_name = options[0]
+    # Enable hierarchical training, False for singular species level
     hierarchical = True if "hierarchical" in options else False
+
+    # Enable dataset randomization, False for no randomization
     ds_randomization = True if "ds_rand" in options else False
+
+    # Enable image augmentation, False for no image augmention
     augmentation = True if "augment" in options else False
-    
+
     # Create save location directory
     if not os.path.exists(f"./{run_name}/"):
         os.mkdir(f"./{run_name}/")
     
     # If cache needs to be used
-    cache_dir = os.getenv("cache_dir") if os.path.isdir(os.getenv("cache_dir")) else None
+    cache_dir = os.getenv("cache_dir", default=None)
+    if cache_dir:
+        cache_dir = cache_dir if os.path.isdir(cache_dir) else None
 
     # Train dataset
     train_dataset = load_dataset(
