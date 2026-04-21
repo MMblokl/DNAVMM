@@ -4,12 +4,12 @@ import sys
 import numpy as np
 import random
 from transformers import AutoTokenizer, AutoModel, set_seed
-from transformers import get_linear_schedule_with_warmup
 from torch import nn
-from sklearn.metrics import f1_score
-import matplotlib.pyplot as plt
 from datasets import load_dataset
 from dotenv import load_dotenv
+
+from ModelModule import ModelModule
+
 
 load_dotenv()
 apitoken = os.getenv("API_KEY")
@@ -18,7 +18,7 @@ global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-class DNAEncoder(nn.Module):
+class DNAEncoder(ModelModule):
     def __init__(
             self,
             params: dict,
@@ -30,8 +30,18 @@ class DNAEncoder(nn.Module):
             augmentation: bool = False,
             hierarchical: bool = False,
         ):
-        super(DNAEncoder, self).__init__()
-        
+
+        super().__init__(
+            params=params,
+            run_name=run_name,
+            ds_randomization=ds_randomization,
+            augmentation=augmentation,
+            hierarchical=hierarchical
+        )
+
+        # Unique parameter for cropping of DNA sequence
+        self.k = params["k"]
+
         # Load pretrained DNA-BERT Model
         if cache_dir:
             self.dna_encoder = AutoModel.from_pretrained(
@@ -53,26 +63,7 @@ class DNAEncoder(nn.Module):
                 d_tokenizer,
                 token=apitoken,
             )
-        
-        # init parameters
-        self.lr = params["lr"]
 
-        self.class_values = params["class_values"]
-        self.class_mapping = params["class_mapping"]
-        self.epoch_ordering = params["epoch_ordering"]
-        self.layer_freezing = params["layer_freezing"]
-
-        self.steps_per_epoch = params["steps_per_epoch"]
-        self.batch_size = params["batch_size"]
-        self.k = params["k"]
-
-        self.hierarchical = hierarchical
-        self.ds_rand = ds_randomization
-        self.augmentation = augmentation
-
-        total_epochs = sum(self.epoch_ordering.values())
-        self.run_name = run_name
-        
         # Hardcoded output sizes of DINOV2_small and DNABERT_6
         d_enc_size = 768
 
@@ -90,24 +81,16 @@ class DNAEncoder(nn.Module):
             
             nn.Linear(128, [i for i in self.class_values.values()][0])
             ) # Maps embedding to species classes
-        
+
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         self.criterion = nn.CrossEntropyLoss()
 
-        # Training metrics storage
-        self.train_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
-        self.eval_loss = np.zeros(shape=[total_epochs + 1, self.steps_per_epoch])
-        self.train_acc = 0
-        self.eval_acc = 0
-        self.train_f1 = 0
-        self.eval_f1 = 0
-        
         # If the weights exist, we have to run from the checkpoint
         if os.path.exists(f"./{run_name}/latest.pt"):
             self.start_from_checkpoint(f"./{run_name}/")
 
 
-    def collate_fn(self, batch):
+    def collate_fn(self, batch, train: bool = False):
         """Custom collation function for dataloader, extract images from the batch and pad them with the largest width from the widest image.
 
         Args:
@@ -116,16 +99,20 @@ class DNAEncoder(nn.Module):
         Returns:
             torch.tensor: The stacked tensor of the batch of images.
         """
-
+        # Get labels based on the class index mapping for the current labeltype
         labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
-        if self.augmentation:
+        
+        # If augmentation is on and training mode is also on, random cropping of a 510-length sequence
+        if self.augmentation and train:
             barcodes = self.kmer_crop(batch["dna_barcode"])
         else:
             barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
-
+        
+        # Tokenize our extracted barcode sequence
+        tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True, truncation=True).to(device)
 
         return {"labels": torch.tensor(labels).long().to(device),
-                "barcodes": barcodes}
+                "barcodes": tokenized_barcodes}
 
 
     def kmer_crop(self, barcodes, max_length=510, center: bool = False):    
@@ -146,298 +133,19 @@ class DNAEncoder(nn.Module):
         crops = [seq[start:start + max_length] for start, seq in zip(starts, barcodes)]
         kmer_crops = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in crops]
         return kmer_crops
-        
-
-    def start_from_checkpoint(self, path):
-        # Load saved metrics
-        metrics = np.load(f"{path}/model_metrics.npy", allow_pickle=True).item()
-
-        self.train_loss = metrics["train_loss"]
-        self.train_acc = metrics["train_acc"]
-        self.labeltype = metrics["current_label"]
-        self.c_epoch = metrics["current_epoch"]
-        self.train_f1 = metrics["train_f1"]
-        self.eval_loss = metrics["eval_loss"]
-        self.eval_acc = metrics["eval_acc"]
-        self.eval_f1 = metrics["eval_f1"]
-        self.layer_freezing = metrics["frozen_until"]
-
-        # Reconstruct the weights to match the previous state
-        # Make sure class head output is the right size
-        self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
-
-        # Freeze weights based on previously defined stats
-        until = self.layer_freezing[self.labeltype]
-        if until:
-            self.freeze_until(self.dna_encoder, until)
-
-        # Make sure optim is the right size
-        self.update_optimizer()
-
-        # Load parameters
-        self.load(f"{path}/latest.pt")
 
 
-    def encode(self, input_ids, attention_mask):
-        outputs = self.dna_encoder(
-            input_ids=input_ids,
-            attention_mask=attention_mask
-        )
-
-        # Mean Pooling
-        hidden = outputs.last_hidden_state
-        mask = attention_mask.unsqueeze(-1).float()
-
-        embedding = (hidden * mask).sum(dim=1)
-        embedding = embedding / mask.sum(dim=1).clamp(min=1e-6)
-
-        return embedding
-
-
-    def forward(self, dna):
+    def forward(self, batch):
         # CLS token as embedding
-        embedding = self.dna_encoder(**dna).last_hidden_state[:,0]
+        embedding = self.dna_encoder(**batch["barcodes"]).last_hidden_state[:,0]
         logits = self.class_head(embedding)
 
         return logits
 
-    def evaluate(self, eval_dataset, final: bool = False):
-        """Single evaluation run on the validation dataset for each epoch."""
-        self.eval() # Turn off the dropouts
-        prev = 0   # Previous index of the dataset
-        eval_loss = [] # List for the validation loss
-        eval_correct = 0 # The number of correct predictions
-        eval_total = 0 # Total number of validation labels
-        prediction_list = [] # List for all predictions done per epoch
-        labels_list = [] # List for all labels per epoch
 
-        with torch.no_grad():  # Disable gradient computation for evaluation
-            for timestep, idx in enumerate(range(self.batch_size, len(eval_dataset), self.batch_size)):
-                # Collate the dataset to get the batches needed to evaluate the model
-                batch = self.collate_fn(eval_dataset[prev:idx])
-                        
-                # Get the images and labels from the current batch
-                labels = batch["labels"]
-                barcodes = batch["barcodes"]
-                tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True, truncation=True).to(device)
-                
-                # Loss calculation
-                logits = self.forward(dna=tokenized_barcodes)
-                loss = self.criterion(logits, labels)
-                
-                # Save the loss
-                eval_loss.append(loss.item())
-
-                # Compute these metrics only on the final epoch
-                if final:
-                    # Compute metrics
-                    prediction = torch.argmax(logits, dim=1)
-                    eval_correct += (prediction == labels).sum().item()
-                    eval_total += labels.size(0)
-                    prediction_list.extend(prediction.cpu().detach().numpy())
-                    labels_list.extend(labels.cpu().detach().numpy())
-
-                # Break the loop when the set number of training steps are reached
-                if timestep == self.steps_per_epoch - 1:
-                    break
-                    
-                # Reset prev
-                prev = idx
-        if final:
-            return eval_correct, eval_total, eval_loss, prediction_list, labels_list
-        else:
-            return eval_loss
-
-
-    def fit(self, train_dataset, final: bool = False):
-        """Fit the model on a shuffled dataset for one epoch"""
-        self.train() # Turn on the dropouts
-        prev = 0   # Previous index of the dataset
-        train_loss = [] # List for the training loss
-        train_correct = 0 # The number of correct predictions
-        train_total = 0 # Total number of training labels
-        prediction_list = [] # List for all predictions done per epoch
-        labels_list = [] # List for all labels per epoch
-
-        for timestep, idx in enumerate(range(self.batch_size, len(train_dataset), self.batch_size)):
-            self.optimizer.zero_grad() # Zero out previous grad
-
-            # Collate data properly
-            batch = self.collate_fn(train_dataset[prev:idx])
-
-            # Single out data
-            labels = batch["labels"]
-            barcodes = batch["barcodes"]
-            tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True, truncation=True).to(device)
-
-            # Calculate loss
-            logits = self.forward(dna=tokenized_barcodes)
-            loss = self.criterion(logits, labels)
-            
-            # Backwards pass
-            loss.backward()
-            self.optimizer.step()
-
-            # Track loss
-            train_loss.append(loss.item())
-
-            # To make the runtime faster, we only calculate metrics for the final epoch
-            if final:
-                # Compute metrics
-                prediction = torch.argmax(logits, dim=1)
-                train_correct += (prediction == labels).sum().item()
-                train_total += labels.size(0)
-                prediction_list.extend(prediction.cpu().detach().numpy())
-                labels_list.extend(labels.cpu().detach().numpy())
-            
-            # Break training when steps are done
-            if timestep == self.steps_per_epoch - 1:
-                break
-                
-            # reset prev
-            prev = idx
-            
-        if final:
-            return train_correct, train_total, train_loss, prediction_list, labels_list
-        else:
-            return train_loss
-    
-    def train_loop(self, train_dataset, eval_dataset):
-        # Loop through class label types
-        label_options = [i for i in self.class_values.keys()]
-        
-        # If loaded from checkpoint, this value is already initialized
-        try:
-            label_options = label_options[label_options.index(self.labeltype):]
-            self.check_start = True
-            epochs = self.epoch_ordering[self.labeltype]
-            epoch_range = [i for i in range(epochs)][self.c_epoch:]
-        except AttributeError:
-            # Not a checkpoint
-            self.check_start = False
-        
-        for labeltype in label_options:
-            # Current type of class/label
-            self.labeltype = labeltype
-            epochs = self.epoch_ordering[labeltype] # Get number of epochs for the label
-            
-            until = self.layer_freezing[self.labeltype] # How many layers to freeze
-            if until: # If None, no freeze.
-                # Freeze the bottom n layers of both encoder
-                self.freeze_until(self.dna_encoder, until)
-            
-            # Make sure a checkpoint load doesnt destoy the old class head
-            if not self.check_start:
-                # Replace final class head layer with a new output layer matching the number of classes
-                self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
-                # Create epoch range for new epoch loop
-                epoch_range = [i for i in range(epochs)]
-
-                # Make sure optim only optimizes trainable weights with requires_grad=true
-                self.update_optimizer()
-            
-            for epoch in epoch_range:
-                self.c_epoch = epoch + 1
-                # Shuffle dataset
-                if self.ds_rand:
-                    train_dataset = train_dataset.shuffle()
-                print(f"Epoch {epoch+1}/{epochs} for {labeltype}.")
-
-                # Check for final epoch when calling self.fit and evaluate.
-                if self.c_epoch == epochs:
-                    train_correct, train_total, train_loss, train_preds, train_labels = self.fit(train_dataset=train_dataset, final=True)
-                    eval_correct, eval_total, eval_loss, eval_preds, eval_labels = self.evaluate(eval_dataset=eval_dataset, final=True)
-                else:
-                    train_loss = self.fit(train_dataset=train_dataset)
-                    eval_loss = self.evaluate(eval_dataset=eval_dataset)
-                
-                # Save and print the metrics for the current epoch
-                self.train_loss[epoch, :] = np.array(train_loss)
-                print("Training loss: ", self.train_loss.mean(axis=1)[epoch])
-                self.eval_loss[epoch, :] = np.array(eval_loss)
-                print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
-
-                if self.c_epoch % 5 == 0:
-                    self.save(f"./{self.run_name}/")
-            
-            # After at least 1 epoch this needs a reset to make sure the class head is replaced
-            self.check_start = False
-        
-        # Compute and save the accuracy after training
-        self.train_acc = train_correct / train_total
-        self.eval_acc = eval_correct / eval_total
-
-        # Compute and save the F1 score after training, using macro to deal with multiclass classification
-        self.train_f1 = f1_score(train_labels, train_preds, average="macro")
-        self.eval_f1 = f1_score(eval_labels, eval_preds, average="macro")
-
-        print(f"Training accuracy: {self.train_acc} Training F1 score: {self.train_f1}")
-        print(f"Training accuracy: {self.eval_acc} Training F1 score: {self.eval_f1}")
-        print("Training loss log: ", self.train_loss.mean(axis=1)[:-1])
-
-
-    def freeze_until(self, model, until):
-        """Freezes weights of given model given the value. If until=1, first 2 layers are frozen."""
-        for i, layer in enumerate(model.encoder.layer):
-            # If the index is withing the to be frozen layers
-            if i <= until:
-                for param in layer.parameters():
-                    param.requires_grad = False
-    
-
-    def update_optimizer(self):
-        """Updates optimizer to only use trainable model params"""
-        trainable_params = filter(lambda p: p.requires_grad, self.parameters())
-        self.optimizer = torch.optim.Adam(trainable_params, lr=self.lr)
-
-    
-    def save(self, path):
-        # Save the weights
-        torch.save({
-            "model": self.state_dict(),
-            "optimizer": self.optimizer.state_dict(),
-        }, f"{path}/latest.pt")
-
-        # Save the metrics in one file
-        metrics = {"current_label": self.labeltype,
-                   "current_epoch": self.c_epoch,
-                   "train_loss": self.train_loss,
-                   "train_acc": self.train_acc,
-                   "train_f1": self.train_f1,
-                   "eval_loss" : self.eval_loss,
-                   "eval_acc": self.eval_acc,
-                   "eval_f1": self.eval_f1,
-                   "epochs": self.epoch_ordering,
-                   "frozen_until": self.layer_freezing,
-                   "hierarchical": self.hierarchical,
-                   "dataset_randomization": self.ds_rand,
-                   "augmentation": self.augmentation,
-        }
-        np.save(f"{path}/model_metrics.npy", metrics)
-    
-
-    def load(self, path):
-        checkpoint = torch.load(path)
-        self.load_state_dict(checkpoint["model"])
-        self.optimizer.load_state_dict(checkpoint["optimizer"])
-        # Some of the values arent kept op proper device, this is the best way to fix
-        for state in self.optimizer.state.values():
-            for k, v in state.items():
-                if torch.is_tensor(v):
-                    state[k] = v.to(device)
-
-
-    def plot_metrics(self, save_path):
-        # Set the number of epochs used for the plots
-        epochs = range(1, self.epoch_ordering["species"]+1)
-  
-        # Plot the loss metrics for the model training and validation and save the figure
-        fig, ax = plt.subplots()
-        ax.plot(epochs, self.train_loss.mean(axis=1)[:-1][0:self.epoch_ordering["species"]], label="Train Loss")
-        ax.plot(epochs, self.eval_loss.mean(axis=1)[:-1][0:self.epoch_ordering["species"]], label="Validation Loss")
-        ax.set(xlabel="Epochs", ylabel="Loss", title="Training vs Validation Loss")
-        ax.legend()
-        fig.savefig(f"{save_path}_loss.png")
+    def freezeencoders(self, until):
+        """Function called during training loop, needs to be specified in each implementation for their respective encoders"""
+        self.freeze_until(self.dna_encoder, until)
 
 if __name__ == "__main__":
     # Set seed for everything
