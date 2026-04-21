@@ -14,14 +14,18 @@ Multiple ways to install required packages, but UV is the easiest. The version n
     - Run export using any cache location with higher storage limits:
         - export UV_CACHE_DIR=/local/project/.cache/uv/ etc.
         - uv sync
+    - ! Python has to be run with uv using the uv run python command:
+        - uv run python fusion.py run_1 hierarchical ds_rand augment
 - venv pip:
     - python -m venv .venv
     - source .venv/bin/activate
     - pip install -r requirements.txt
+    - python fusion.py run_1 hierarchical ds_rand augment
 - conda:
     - Create a conda environment
     - conda activate env_name
     - pip install -r requirements.txt
+    - python fusion.py run_1 hierarchical ds_rand augment
 - List of required packages:
     - torch == 2.7.0
     - datasets == 3.6.0
