@@ -8,8 +8,6 @@ import random
 import os
 import sys
 from dotenv import load_dotenv
-import matplotlib.pyplot as plt
-from sklearn.metrics import f1_score
 
 from ModelModule import ModelModule
 

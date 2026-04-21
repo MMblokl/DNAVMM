@@ -8,8 +8,8 @@ import os
 import numpy as np
 import random
 import matplotlib.pyplot as plt
-from sklearn.metrics import f1_score
 import sys
+
 from ModelModule import ModelModule
 
 
@@ -135,15 +135,17 @@ class VisualEncoder(ModelModule):
         # CLS for embedding
         embedding = self.visual_encoder(**batch["images"]).last_hidden_state[:,0]
 
-        # Pass the embedding through the model
+        # Pass the embedding through classification head
         logits = self.class_head(embedding)
 
         return logits
 
     def freezeencoders(self, until):
+        """Function called during training loop, needs to be specified in each implementation for their respective encoders"""
         self.freeze_until(self.visual_encoder, until)
 
     def visualize_augment(self, train_dataset, save_path, n_images):
+        """Visualization of some image augmentation operations."""
         # Create the output directory for the image plots
         os.makedirs(save_path, exist_ok=True)
 

@@ -4,12 +4,10 @@ import sys
 import numpy as np
 import random
 from transformers import AutoTokenizer, AutoModel, set_seed
-from transformers import get_linear_schedule_with_warmup
 from torch import nn
-from sklearn.metrics import f1_score
-import matplotlib.pyplot as plt
 from datasets import load_dataset
 from dotenv import load_dotenv
+
 from ModelModule import ModelModule
 
 
@@ -146,6 +144,7 @@ class DNAEncoder(ModelModule):
 
 
     def freezeencoders(self, until):
+        """Function called during training loop, needs to be specified in each implementation for their respective encoders"""
         self.freeze_until(self.dna_encoder, until)
 
 if __name__ == "__main__":
@@ -267,8 +266,8 @@ if __name__ == "__main__":
     else:
         parameters = dict(
             lr = 5e-5,
-            steps_per_epoch=1,
-            batch_size=1,
+            steps_per_epoch=200,
+            batch_size=16,
             class_values = {
                 "species": n_species,
                 },

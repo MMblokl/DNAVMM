@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from transformers import AutoModel, set_seed, AutoImageProcessor
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import f1_score
