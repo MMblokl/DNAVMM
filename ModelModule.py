@@ -22,22 +22,16 @@ class ModelModule(nn.Module):
         super(ModelModule, self).__init__()
         
         # Initialize the parameters
-        self.lr = params["lr"]
-
-        self.class_values = params["class_values"]
-        self.class_mapping = params["class_mapping"]
-        self.epoch_ordering = params["epoch_ordering"]
-        self.layer_freezing = params["layer_freezing"]
-
-        self.steps_per_epoch = params["steps_per_epoch"]
-        self.batch_size = params["batch_size"]
-
-        # Initialize whether to use dataset randomization
-        self.ds_randomization = ds_randomization
-        # Initialize whether to use image augmentation
-        self.augmentation = augmentation
-        # Whether the training scheme is hierarchical for logging
-        self.hierarchical = hierarchical
+        self.lr: dict = params["lr"] # learning rate
+        self.class_values: dict = params["class_values"] # Number of classes for each label group
+        self.class_mapping: dict = params["class_mapping"] # Class mapping to their indexes for each label group
+        self.epoch_ordering: dict = params["epoch_ordering"] # Number of epochs of each label groups
+        self.layer_freezing: dict = params["layer_freezing"] # Dictionary telling the model how many layers to freeze after each hierierchical step
+        self.steps_per_epoch: int = params["steps_per_epoch"] # Number of batches per epoch
+        self.batch_size: int = params["batch_size"] # Batch size
+        self.ds_randomization: bool = ds_randomization # Use dataset shuffling y/n
+        self.augmentation: bool = augmentation # Whether to use image/dna augmentation
+        self.hierarchical:bool = hierarchical # Whether training uses hierarchical training structure y/n
 
         # Save name of run
         self.run_name = run_name
@@ -54,18 +48,21 @@ class ModelModule(nn.Module):
 
     def train_loop(self, train_dataset, eval_dataset):
         """Loop through the class and label types"""
+        # Create a list for each label type.
         label_options = [i for i in self.class_values.keys()]
         
         # If loaded from checkpoint, this value is already initialized
         try:
+            # Recreate list for each label type based on where model left of
             label_options = label_options[label_options.index(self.labeltype):]
-            self.check_start = True
-            epochs = self.epoch_ordering[self.labeltype]
-            epoch_range = [i for i in range(epochs)][self.c_epoch:]
+            self.check_start = True # Whether optimizer and class head needs to be updated
+            epochs = self.epoch_ordering[self.labeltype] # Number of epochs for the label type
+            epoch_range = [i for i in range(epochs)][self.c_epoch:] # Epoch loop based on where it left off
         except AttributeError:
-            # Not a checkpoint
+            # Not a checkpoint, only happens when self.labeltype is not yet initialized
             self.check_start = False
         
+        # Loop through all hierarchical label types
         for labeltype in label_options:
             self.labeltype = labeltype # Set the current label type
             epochs = self.epoch_ordering[labeltype] # Get the number of epochs for the label
@@ -96,7 +93,6 @@ class ModelModule(nn.Module):
                     # Shuffle the training dataset
                     train_dataset = train_dataset.shuffle()
                 
-
                 # Check for the final epoch when calling self.fit and self.evaluate
                 # Final epoch
                 if self.c_epoch == epochs:
@@ -118,6 +114,7 @@ class ModelModule(nn.Module):
                 self.eval_loss[epoch, :] = np.array(eval_loss)
                 print("Validation loss: ", self.eval_loss.mean(axis=1)[epoch])
 
+                # Save a checkpoint every 5 epochs
                 if self.c_epoch % 5 == 0:
                     self.save(f"./{self.run_name}/")
             
@@ -178,10 +175,20 @@ class ModelModule(nn.Module):
 
 
     def load(self, path):
+        """Load the parameters from a specified checkpoint
+
+        Args:
+            path: (string): Filepath to the checkpoint.pt file.
+        
+        Returns:
+            None
+        """
+        # Load the optimizer and model weigths from checkpoint
         checkpoint = torch.load(path)
         self.load_state_dict(checkpoint["model"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
-        # Some of the values arent kept op proper device, this is the best way to fix
+
+        # Some values in the checkpoint, mainly optimizer momentum/gradient information
         for state in self.optimizer.state.values():
             for k, v in state.items():
                 if torch.is_tensor(v):
@@ -203,9 +210,16 @@ class ModelModule(nn.Module):
                     param.requires_grad = False
 
     def start_from_checkpoint(self, path):
+        """ Start the model from a checkpoint, should be called at the model init phase.
+
+        Args:
+            path (string): Filepath to checkpoint.pt file.
+        
+        Returns:
+            None
+        """
         # Load saved metrics
         metrics = np.load(f"{path}/model_metrics.npy", allow_pickle=True).item()
-
         self.train_loss = metrics["train_loss"]
         self.train_acc = metrics["train_acc"]
         self.labeltype = metrics["current_label"]
@@ -215,6 +229,7 @@ class ModelModule(nn.Module):
         self.eval_acc = metrics["eval_acc"]
         self.eval_f1 = metrics["eval_f1"]
         self.layer_freezing = metrics["frozen_until"]
+
         # Reconstruct the weights to match the previous state
         # Make sure class head output is the right size
         self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
@@ -227,20 +242,29 @@ class ModelModule(nn.Module):
         # Make sure optim is the right size
         self.update_optimizer()
 
-        # Load parameters
+        # Load parameters after making sure all modules are the right size
         self.load(f"{path}/latest.pt")
 
     
     def fit(self, train_dataset, final: bool = False):
-        """Fit the model on a shuffled dataset for one epoch."""
+        """Fit the model on a shuffled dataset for one epoch.
+        
+        Args:
+            train_dataset: Huggingface dataset object containing train split
+            final (bool): Whether this epoch is the final epoch for metrics.
+        
+        Returns:
+            train loss, and training metrics on the final epoch
+        """
         self.train() # Turn on the dropouts
-        prev = 0   # Previous index of the dataset
+        prev = 0   # Previous index, the index of the last batch entry for the next batch
         train_loss = [] # List for the training loss
         train_correct = 0 # The number of correct predictions
         train_total = 0 # Total number of training labels
         prediction_list = [] # List for all predictions done per epoch
         labels_list = [] # List for all labels per epoch
 
+        # Loop through indexes for each batch.
         for timestep, idx in enumerate(range(self.batch_size, len(train_dataset), self.batch_size)):
             self.optimizer.zero_grad() # Zero out previous grad
 
@@ -274,7 +298,7 @@ class ModelModule(nn.Module):
             if timestep == self.steps_per_epoch - 1:
                 break
                 
-            # Reset the previous index of the dataset
+            # Set the previous index as the currect index value for the next batch
             prev = idx
         
         if final:
@@ -284,9 +308,17 @@ class ModelModule(nn.Module):
     
 
     def evaluate(self, eval_dataset, final: bool = True):
-        """Single evaluation run on the validation dataset for each epoch."""
+        """Single evaluation run on the validation dataset for each epoch.
+        
+        Args:
+            eval_dataset: Huggingface dataset of evaluation split.
+            final (boolean): Whether this epoch is the final one for metrics.
+        
+        Returns:
+            Validation loss and metrics if this is the final epoch.
+        """
         self.eval() # Turn off the dropouts
-        prev = 0   # Previous index of the dataset
+        prev = 0   # Previous index, the index of the last batch entry for the next batch
         eval_loss = [] # List for the validation loss
         eval_correct = 0 # The number of correct predictions
         eval_total = 0 # Total number of validation labels
@@ -294,6 +326,7 @@ class ModelModule(nn.Module):
         labels_list = [] # List for all labels per epoch
   
         with torch.no_grad():  # Disable gradient computation for evaluation
+            # Loop through indexes for each batch.
             for timestep, idx in enumerate(range(self.batch_size, len(eval_dataset), self.batch_size)):
 
                 # Collate the dataset to get the batches needed to evaluate the model
@@ -322,12 +355,11 @@ class ModelModule(nn.Module):
                 if timestep == self.steps_per_epoch - 1:
                     break
                     
-                # Reset the previous index of the dataset
+                # Set the previous index as the currect index value for the next batch
                 prev = idx
 
         if final:
             return eval_correct, eval_total, eval_loss, prediction_list, labels_list
-        
         else:
             return eval_loss
 

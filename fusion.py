@@ -34,6 +34,7 @@ class DNAVMM(ModelModule):
             hierarchical: bool = False,
         ):
         
+        # Init all base functions
         super().__init__(
             params=params,
             run_name=run_name,
@@ -89,7 +90,6 @@ class DNAVMM(ModelModule):
         d_enc_size = 768
         v_enc_size = 384
 
-
         # Augmentation Composer
         self.augment = T.Compose([
             # Convert the image to float32
@@ -123,6 +123,7 @@ class DNAVMM(ModelModule):
             nn.Linear(128, [i for i in self.class_values.values()][0])
         )
 
+        # Init optimizer and loss function
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         self.criterion = nn.CrossEntropyLoss()
 
@@ -132,6 +133,7 @@ class DNAVMM(ModelModule):
 
 
     def freezeencoders(self, until):
+        """Function called during training loop, needs to be specified in each implementation for their respective encoders"""
         self.freeze_until(self.visual_encoder, until)
         self.freeze_until(self.dna_encoder, until)
 
