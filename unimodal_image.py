@@ -198,8 +198,10 @@ if __name__ == "__main__":
     # Enable image augmentation, False for no image augmention
     augmentation = True if "augment" in options else False
 
-    # Enable cache directory, False for no cache directory
-    cache_dir = os.getenv("cache_dir") if os.path.isdir(os.getenv("cache_dir")) else None
+    # Enable cache directory, None for no cache directory
+    cache_dir = os.getenv("cache_dir", default=None)
+    if cache_dir:
+        cache_dir = cache_dir if os.path.isdir(cache_dir) else None
 
     # Create save location directory
     if not os.path.exists(f"./{run_name}/"):
