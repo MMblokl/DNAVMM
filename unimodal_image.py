@@ -200,8 +200,6 @@ if __name__ == "__main__":
 
     # Enable cache directory, None for no cache directory
     cache_dir = os.getenv("cache_dir", default=None)
-    if not os.path.isdir(cache_dir):
-        os.mkdir(cache_dir)
     class_indices_path = os.getenv("class_indices", default="./class_indices/")
 
     # Create save location directory
@@ -209,6 +207,7 @@ if __name__ == "__main__":
         os.mkdir(f"{run_name}/")
 
     # Load the BIOSCAN5M train dataset
+    print("Loading/Downloading training dataset.")
     train_dataset = load_dataset(
         "dataset.py",
         name="cropped_256_train", 
@@ -219,6 +218,7 @@ if __name__ == "__main__":
         )
     train_dataset = train_dataset.with_format("torch", device=device)
 
+    print("Loading/Downloading validation dataset.")
     # Load the BIOSCAN5M validation dataset
     eval_dataset = load_dataset(
         "dataset.py", 
@@ -229,6 +229,8 @@ if __name__ == "__main__":
         cache_dir=cache_dir
         )
     eval_dataset = eval_dataset.with_format("torch", device=device)
+
+    print("Generating/loading class indices.")
 
     # Initialize the taxonomic labels for organisms in the dataset
     uniq_classes = set.union(set(train_dataset["class"]), set(train_dataset["class"])) # Class taxonomic level
@@ -321,6 +323,8 @@ if __name__ == "__main__":
                 "species": None,
                 }
         )
+
+    print(f"Running model on {run_name}, with hierarchical: {hierarchical}, ds_rand: {ds_randomization}, augmentation: {augmentation}.")
 
     # Set the model parameters and train the model
     model = VisualEncoder(

@@ -175,9 +175,9 @@ if __name__ == "__main__":
     
     # If cache needs to be used
     cache_dir = os.getenv("cache_dir", default=None)
-    if not os.path.isdir(cache_dir):
-        os.mkdir(cache_dir)
     class_indices_path = os.getenv("class_indices", default="./class_indices/")
+
+    print("Loading/Downloading training dataset.")
 
     # Train dataset
     train_dataset = load_dataset(
@@ -190,6 +190,8 @@ if __name__ == "__main__":
     )
     train_dataset = train_dataset.with_format("torch", device=device)
     
+    print("Loading/Downloading validation dataset.")
+
     # Load the BIOSCAN5M validation dataset
     eval_dataset = load_dataset("dataset.py", 
                                 name="cropped_256_eval", 
@@ -200,7 +202,9 @@ if __name__ == "__main__":
     )
     eval_dataset = eval_dataset.with_format("torch", device=device)
     
-        # Initialize every single species as a valuen integer
+    print("Generating/loading class indices.")
+    
+    # Initialize every single species as a valuen integer
     uniq_classes = set.union(set(train_dataset["class"]), set(train_dataset["class"]))
     class_dict = {entry: i for i, entry in enumerate(uniq_classes)}
     n_class = len(uniq_classes)
@@ -289,6 +293,8 @@ if __name__ == "__main__":
                 },
             k=6,
         )
+
+    print(f"Running model on {run_name}, with hierarchical: {hierarchical}, ds_rand: {ds_randomization}, augmentation: {augmentation}.")
 
     model = DNAEncoder(
         cache_dir=cache_dir,
