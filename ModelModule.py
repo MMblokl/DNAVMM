@@ -145,7 +145,7 @@ class ModelModule(nn.Module):
         ax.plot(epochs, self.eval_loss.mean(axis=1)[:-1][0:self.epoch_ordering["species"]], label="Validation Loss")
         ax.set(xlabel="Epochs", ylabel="Loss", title="Training vs Validation Loss")
         ax.legend()
-        fig.savefig(f"{save_path}_loss.png")
+        fig.savefig(f"{save_path}/loss_plot.png")
 
 
     def save(self, path):

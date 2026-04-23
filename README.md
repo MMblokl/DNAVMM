@@ -38,7 +38,7 @@ Multiple ways to install required packages, but UV is the easiest. The version n
 # Command line arguments
 In order to run the model in different modes, specific arguments have to supplied when running the scripts.
 
-First argument defines the run name, under which weights and metrics are saved
+Very first argument should be the run directory, the location where all related files to the current one are saved; e.g. /data/user/run_1/
 
 Dataset randomization during training: "ds_rand"
 
@@ -48,9 +48,9 @@ Hierarchical training scheme: "hierarchical"
 
 Command examples:
 - Using UV:
-    - uv run python model.py RUN_1 augment ds_rand large_tokenizer
+    - uv run python model.py /data/run_1/ augment ds_rand large_tokenizer
 - Using venv or conda:
-    - python model.py RUN_2 hierarchical
+    - python model.py /data/run_2/ hierarchical
 
 # .env file envexample
 Optional parameters to set, but required if one want to run these on the leiden university clusters. Set the cache_dir to any /data/ directory to store and huggingface cache files. API_KEY is the huggingface access token for faster downloading of the files and weights.
@@ -58,6 +58,8 @@ Optional parameters to set, but required if one want to run these on the leiden 
 API_KEY; your huggingface API key
 
 cache_dir; set to any directory to house the HF cache
+
+class_indices; The location of the class_indices directory. Recommended to set to a static value for making sure all models train using the same class indices. Make sure it ends with a "/"
 
 - usage:
     - Rename "env_example" to ".env" and set the proper parameters as defined in the example. If left as-is, it will not do anything.

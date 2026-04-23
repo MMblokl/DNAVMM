@@ -100,8 +100,8 @@ class VisualEncoder(ModelModule):
             T.ConvertImageDtype(torch.uint8)
         ])
 
-        if os.path.exists(f"./{run_name}/latest.pt"):
-            self.start_from_checkpoint(f"./{run_name}/")
+        if os.path.exists(f"{run_name}/latest.pt"):
+            self.start_from_checkpoint(f"{run_name}/")
 
     def collate_fn(self, batch, train: bool = False):
         """Custom collation function for the dataset, extract images from the batch and process them with the AutoImageProcessor.
@@ -202,10 +202,11 @@ if __name__ == "__main__":
     cache_dir = os.getenv("cache_dir", default=None)
     if cache_dir:
         cache_dir = cache_dir if os.path.isdir(cache_dir) else None
+    class_indices_path = os.getenv("class_indices", default="./class_indices/")
 
     # Create save location directory
-    if not os.path.exists(f"./{run_name}/"):
-        os.mkdir(f"./{run_name}/")
+    if not os.path.exists(f"{run_name}/"):
+        os.mkdir(f"{run_name}/")
 
     # Load the BIOSCAN5M train dataset
     train_dataset = load_dataset(
@@ -251,20 +252,19 @@ if __name__ == "__main__":
     n_species = len(uniq_species)
     
     # Set is fully non-deterministic, so we fix that by using mapping files to class indices
-    if not os.path.exists("./class_indices/"):
-        os.mkdir("./class_indices/")
-        np.save("./class_indices/class.npy", class_dict)
-        np.save("./class_indices/order.npy", order_dict)
-        np.save("./class_indices/family.npy", family_dict)
-        np.save("./class_indices/genus.npy", genus_dict)
-        np.save("./class_indices/species.npy", species_dict)
+    if not os.path.exists(class_indices_path):
+        os.mkdir(class_indices_path)
+        np.save(f"{class_indices_path}class.npy", class_dict)
+        np.save(f"{class_indices_path}order.npy", order_dict)
+        np.save(f"{class_indices_path}family.npy", family_dict)
+        np.save(f"{class_indices_path}genus.npy", genus_dict)
+        np.save(f"{class_indices_path}species.npy", species_dict)
     else:
-        class_dict = np.load("./class_indices/class.npy", allow_pickle=True).item()
-        order_dict = np.load("./class_indices/order.npy", allow_pickle=True).item()
-        family_dict = np.load("./class_indices/family.npy", allow_pickle=True).item()
-        genus_dict = np.load("./class_indices/genus.npy", allow_pickle=True).item()
-        species_dict = np.load("./class_indices/species.npy", allow_pickle=True).item()
-
+        class_dict = np.load(f"{class_indices_path}class.npy", allow_pickle=True).item()
+        order_dict = np.load(f"{class_indices_path}order.npy", allow_pickle=True).item()
+        family_dict = np.load(f"{class_indices_path}family.npy", allow_pickle=True).item()
+        genus_dict = np.load(f"{class_indices_path}genus.npy", allow_pickle=True).item()
+        species_dict = np.load(f"{class_indices_path}species.npy", allow_pickle=True).item()
 
     if hierarchical:
         # Initialize parameters to perform hierarchical training
@@ -335,15 +335,15 @@ if __name__ == "__main__":
     model.train_loop(train_dataset, eval_dataset)
 
     # Save the model weights obtained
-    model.save(f"./{run_name}")
+    model.save(f"{run_name}")
 
     # Plot the metrics of the model
-    model.plot_metrics(save_path=f"./{run_name}")
+    model.plot_metrics(save_path=f"{run_name}")
 
     if augmentation:
         # Visualize the training images and augment examples
         model.visualize_augment(
             train_dataset=train_dataset,
-            save_path=f"./{run_name}/augment_plot",
+            save_path=f"{run_name}/augment_plot",
             n_images=20
         )

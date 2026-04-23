@@ -1,2 +1,3 @@
 API_KEY = "APIKEY FROM HUGGINGFACE HERE"
 cache_dir = ""
+class_indices = "./class_indices/"
