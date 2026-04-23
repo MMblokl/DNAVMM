@@ -200,8 +200,8 @@ if __name__ == "__main__":
 
     # Enable cache directory, None for no cache directory
     cache_dir = os.getenv("cache_dir", default=None)
-    if cache_dir:
-        cache_dir = cache_dir if os.path.isdir(cache_dir) else None
+    if not os.path.isdir(cache_dir):
+        os.mkdir(cache_dir)
     class_indices_path = os.getenv("class_indices", default="./class_indices/")
 
     # Create save location directory
