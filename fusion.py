@@ -151,7 +151,7 @@ class DNAVMM(ModelModule):
         if self.augmentation and train:
             # Apply the image augmentation method to every image
             images = [self.augment(img) for img in images]
-            barcodes = self.kmer_crop(batch["barcodes"])
+            barcodes = self.kmer_crop(batch["dna_barcode"])
         else:
             barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
 
