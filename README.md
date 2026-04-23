@@ -1,6 +1,10 @@
 # DNAVMM
 Multi-modal DNA and vision species classification model for Multimodal Models in Ecology and Biodiversity.
 
+# ! Important for running
+At the moment, the script works best when ran from the project directory.
+This is mainly for the use of the .env file for using the hf api and changing its cache directory.
+
 # Downloading required packages
 Multiple ways to install required packages, but UV is the easiest. The version numbers are VERY important due to BIOSCAN-1M requirements.
 - uv:
