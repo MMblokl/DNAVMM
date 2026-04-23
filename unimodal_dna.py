@@ -86,8 +86,8 @@ class DNAEncoder(ModelModule):
         self.criterion = nn.CrossEntropyLoss()
 
         # If the weights exist, we have to run from the checkpoint
-        if os.path.exists(f"./{run_name}/latest.pt"):
-            self.start_from_checkpoint(f"./{run_name}/")
+        if os.path.exists(f"{run_name}/latest.pt"):
+            self.start_from_checkpoint(f"{run_name}/")
 
 
     def collate_fn(self, batch, train: bool = False):
@@ -170,13 +170,14 @@ if __name__ == "__main__":
     augmentation = True if "augment" in options else False
 
     # Create save location directory
-    if not os.path.exists(f"./{run_name}/"):
-        os.mkdir(f"./{run_name}/")
+    if not os.path.exists(f"{run_name}/"):
+        os.mkdir(f"{run_name}/")
     
     # If cache needs to be used
     cache_dir = os.getenv("cache_dir", default=None)
     if cache_dir:
         cache_dir = cache_dir if os.path.isdir(cache_dir) else None
+    class_indices_path = os.getenv("class_indices", default="./class_indices/")
 
     # Train dataset
     train_dataset = load_dataset(
@@ -221,20 +222,19 @@ if __name__ == "__main__":
     n_species = len(uniq_species)
     
     # Set is fully non-deterministic, so we fix that by using mapping files to class indices
-    if not os.path.exists("./class_indices/"):
-        os.mkdir("./class_indices/")
-        np.save("./class_indices/class.npy", class_dict)
-        np.save("./class_indices/order.npy", order_dict)
-        np.save("./class_indices/family.npy", family_dict)
-        np.save("./class_indices/genus.npy", genus_dict)
-        np.save("./class_indices/species.npy", species_dict)
+    if not os.path.exists(class_indices_path):
+        os.mkdir(class_indices_path)
+        np.save(f"{class_indices_path}class.npy", class_dict)
+        np.save(f"{class_indices_path}order.npy", order_dict)
+        np.save(f"{class_indices_path}family.npy", family_dict)
+        np.save(f"{class_indices_path}genus.npy", genus_dict)
+        np.save(f"{class_indices_path}species.npy", species_dict)
     else:
-        class_dict = np.load("./class_indices/class.npy", allow_pickle=True).item()
-        order_dict = np.load("./class_indices/order.npy", allow_pickle=True).item()
-        family_dict = np.load("./class_indices/family.npy", allow_pickle=True).item()
-        genus_dict = np.load("./class_indices/genus.npy", allow_pickle=True).item()
-        species_dict = np.load("./class_indices/species.npy", allow_pickle=True).item()
-
+        class_dict = np.load(f"{class_indices_path}class.npy", allow_pickle=True).item()
+        order_dict = np.load(f"{class_indices_path}order.npy", allow_pickle=True).item()
+        family_dict = np.load(f"{class_indices_path}family.npy", allow_pickle=True).item()
+        genus_dict = np.load(f"{class_indices_path}genus.npy", allow_pickle=True).item()
+        species_dict = np.load(f"{class_indices_path}species.npy", allow_pickle=True).item()
     if hierarchical:
         parameters = dict(
             lr = 5e-5,
@@ -301,6 +301,6 @@ if __name__ == "__main__":
 
     model = model.to(device)
     model.train_loop(train_dataset, eval_dataset)
-    model.save(f"./{run_name}/")
-    model.plot_metrics(save_path=f"./{run_name}")
+    model.save(f"{run_name}/")
+    model.plot_metrics(save_path=f"{run_name}")
     
