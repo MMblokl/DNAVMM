@@ -20,7 +20,7 @@ if __name__ == "__main__":
         # Get epoch range value properly
         train_loss = metrics["train_loss"].mean(axis=1)[:-1]
         eval_loss = metrics["eval_loss"].mean(axis=1)[:-1]
-
+        print(f"{run_name}\nTrain_acc: {metrics["train_acc"]}\nTrain_F1: {metrics["train_f1"]}\nEval_acc: {metrics["eval_acc"]}\nEval_F1: {metrics["eval_f1"]}")
         # Make plot, 2 lines of same colour
         # Train loss is dotted line
         epoch_range = [x for x in range (1, epochs + 1)]
