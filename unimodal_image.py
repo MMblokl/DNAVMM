@@ -232,24 +232,24 @@ if __name__ == "__main__":
 
     print("Generating/loading class indices.")
 
-    # Initialize the taxonomic labels for organisms in the dataset
-    uniq_classes = set.union(set(train_dataset["class"]), set(train_dataset["class"])) # Class taxonomic level
+    # Initialize every single species as a valuen integer
+    uniq_classes = set.union(set(train_dataset["class"]), set(eval_dataset["class"]))
     class_dict = {entry: i for i, entry in enumerate(uniq_classes)}
     n_class = len(uniq_classes)
 
-    uniq_orders = set.union(set(train_dataset["order"]), set(eval_dataset["order"])) # Order taxonomic level
+    uniq_orders = set.union(set(train_dataset["order"]), set(eval_dataset["order"]))
     order_dict = {entry: i for i, entry in enumerate(uniq_orders)}
     n_orders = len(uniq_orders)
 
-    uniq_families = set.union(set(train_dataset["family"]), set(eval_dataset["family"])) # Family taxonomic level
+    uniq_families = set.union(set(train_dataset["family"]), set(eval_dataset["family"]))
     family_dict = {entry: i for i, entry in enumerate(uniq_families)}
     n_family = len(uniq_families)
 
-    uniq_genus = set.union(set(train_dataset["genus"]), set(eval_dataset["genus"])) # Genus taxonomic level
+    uniq_genus = set.union(set(train_dataset["genus"]), set(eval_dataset["genus"]))
     genus_dict = {entry: i for i, entry in enumerate(uniq_genus)}
     n_genus = len(uniq_genus)
 
-    uniq_species = set.union(set(train_dataset["species"]), set(train_dataset["species"])) # Species taxonomic level
+    uniq_species = set.union(set(train_dataset["species"]), set(eval_dataset["species"]))
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
     n_species = len(uniq_species)
     
