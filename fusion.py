@@ -255,7 +255,7 @@ if __name__ == "__main__":
     
     print("Generating/loading class indices")
     # Initialize every single species as a valuen integer
-    uniq_classes = set.union(set(train_dataset["class"]), set(train_dataset["class"]))
+    uniq_classes = set.union(set(train_dataset["class"]), set(eval_dataset["class"]))
     class_dict = {entry: i for i, entry in enumerate(uniq_classes)}
     n_class = len(uniq_classes)
 
@@ -271,7 +271,7 @@ if __name__ == "__main__":
     genus_dict = {entry: i for i, entry in enumerate(uniq_genus)}
     n_genus = len(uniq_genus)
 
-    uniq_species = set.union(set(train_dataset["species"]), set(train_dataset["species"]))
+    uniq_species = set.union(set(train_dataset["species"]), set(eval_dataset["species"]))
     species_dict = {entry: i for i, entry in enumerate(uniq_species)}
     n_species = len(uniq_species)
     
