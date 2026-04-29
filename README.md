@@ -11,7 +11,8 @@ cache_dir; set to any directory to house the HF cache, only relavent if your hom
 class_indices; The location of the class_indices directory. If running from the project repo directory directly, this does not need to be changed.
 
 - usage:
-    - Rename "env_example" to ".env" and set the proper parameters as defined in the example. If left as-is, it will not do anything.
+    - After finalizing your settings, rename env_example to ".env" and make sure file is present in the project directory when running.
+    - ! These settings will only work if you run the script inside the project directory, so make sure to do this or else it will not function properly.
 
 # Downloading required packages
 Multiple ways to install required packages, but UV is the easiest. The version numbers are VERY important due to BIOSCAN-1M requirements.
