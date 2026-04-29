@@ -1,9 +1,17 @@
 # DNAVMM
 Multi-modal DNA and vision species classification model for Multimodal Models in Ecology and Biodiversity.
 
-# ! Important for running
-At the moment, the script works best when ran from the project directory.
-This is mainly for the use of the .env file for using the hf api and changing its cache directory.
+# .env file envexample
+Optional parameters to set, but required if one want to run these on the leiden university clusters. Set the cache_dir to any /data/ directory to store and huggingface cache files. API_KEY is the huggingface access token for faster downloading of the files and weights.
+
+API_KEY; your huggingface API key
+
+cache_dir; set to any directory to house the HF cache, only relavent if your home directory has storage quotas.
+
+class_indices; The location of the class_indices directory. If running from the project repo directory directly, this does not need to be changed.
+
+- usage:
+    - Rename "env_example" to ".env" and set the proper parameters as defined in the example. If left as-is, it will not do anything.
 
 # Downloading required packages
 Multiple ways to install required packages, but UV is the easiest. The version numbers are VERY important due to BIOSCAN-1M requirements.
@@ -39,7 +47,7 @@ Multiple ways to install required packages, but UV is the easiest. The version n
     - transformers
     - scikit-learn
 
-# Command line arguments
+# Running the models
 In order to run the model in different modes, specific arguments have to supplied when running the scripts.
 
 Very first argument should be the run directory, the location where all related files to the current one are saved; e.g. /data/user/run_1/
@@ -56,17 +64,6 @@ Command examples:
 - Using venv or conda:
     - python model.py /data/run_2/ hierarchical
 
-# .env file envexample
-Optional parameters to set, but required if one want to run these on the leiden university clusters. Set the cache_dir to any /data/ directory to store and huggingface cache files. API_KEY is the huggingface access token for faster downloading of the files and weights.
-
-API_KEY; your huggingface API key
-
-cache_dir; set to any directory to house the HF cache
-
-class_indices; The location of the class_indices directory. Recommended to set to a static value for making sure all models train using the same class indices. Make sure it ends with a "/"
-
-- usage:
-    - Rename "env_example" to ".env" and set the proper parameters as defined in the example. If left as-is, it will not do anything.
 
 # Dataset
 The dataset.py script is a script made for getting the BIOSCAN-1M dataset, and the model is also set up to only take this dataset as of writing.
@@ -80,5 +77,4 @@ Every 5 epochs, model.weights will be replaced with the last weights to reduce m
 ! Make sure to not run the script again if the model has finished training completely, as this might override results.
 
 # Class indices
-The very first run of any model generated class_indices directory. This is a bit of a roundabout way to do this but it works fine.
-These indices are for reproducibility and for making sure the model checkpoint doesnt start training using different indices.
+The very first run of any model generated class_indices directory if it is not yet present. These indices are for reproducibility and for making sure the model checkpoint doesnt start training using different indices.
