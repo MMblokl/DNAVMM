@@ -51,7 +51,8 @@ There are multiple ways to install required packages, but UV is the easiest. The
 
 # Running the models
 In order to run the model with different settings, run the scripts with specific command line arguments:
-- **IMPORTANT** Very first argument should be the run directory, the location where all related files to the current one are saved; e.g. /data/user/run_1/
+- **IMPORTANT**
+    - Very first argument should be the run directory, the location where all related files to the current one are saved; e.g. /data/user/run_1/
 - Dataset randomization during training: "ds_rand"
 - Data augmentation during training: "augment"
 - Hierarchical training scheme: "hierarchical"
