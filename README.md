@@ -59,9 +59,9 @@ In order to run the model with different settings, run the scripts with specific
 
 Command examples:
 - Using UV:
-    - uv run python model.py /data/run_1/ augment ds_rand large_tokenizer
+    - uv run python model.py /data/run_1/ augment ds_rand
 - Using venv or conda:
-    - python model.py /data/run_2/ hierarchical
+    - python model.py /data/run_2/ hierarchical ds_rand
 
 # Creating metric graphs
 To create a t-SNE visualization, simply run the following:
