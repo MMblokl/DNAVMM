@@ -90,5 +90,6 @@ Every 5 epochs, model.weights will be replaced with the last weights to reduce m
 
 # Class indices
 The class_indices directory contains shared class indices for the BIOSCAN-5M dataset, and is generated again by any model script if removed. 
+
 **Important**
 - If removed, the link from indices to actuall classes dissapears, meaning you will have to re-train your from the start again.
