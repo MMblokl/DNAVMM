@@ -76,9 +76,10 @@ To create a training and validation loss plot of multiple runs of a model:
 
 
 # Dataset
-The dataset.py script is a script made for getting the BIOSCAN-5M dataset, and the model is also set up to only take this dataset as of writing.
+The dataset.py script is a script from the BIOSCAN-5M authors and downloads the dataset files. The current model is also only set up to handle this dataset as of writing.
 
-! This script is quite old and only works using dataset==3.6.0, using any other version will make the script stop functioning.
+**Important**
+- This script is quite old and only works using dataset==3.6.0, using any other version will make the script stop functioning.
 
 # Model checkpointing
 The model automatically loads from a given checkpoint every 5 epochs, and will load from weights given a specific run_name.
