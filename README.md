@@ -1,7 +1,7 @@
 # DNAVMM
 Multi-modal DNA and vision species classification model for Multimodal Models in Ecology and Biodiversity.
 
-# .env file envexample
+# .env file env_example
 Optional parameters to set, but required if one want to run these on the leiden university clusters. Set the cache_dir to any /data/ directory to store huggingface cache files. API_KEY is the huggingface access token for faster downloading of the files and weights. class_indices can be kept as-is, unless you want to move this file anywhere else.
 
 API_KEY; your huggingface API key
