@@ -2,7 +2,7 @@
 Multi-modal DNA and vision species classification model for Multimodal Models in Ecology and Biodiversity.
 
 # .env file envexample
-Optional parameters to set, but required if one want to run these on the leiden university clusters. Set the cache_dir to any /data/ directory to store and huggingface cache files. API_KEY is the huggingface access token for faster downloading of the files and weights.
+Optional parameters to set, but required if one want to run these on the leiden university clusters. Set the cache_dir to any /data/ directory to store huggingface cache files. API_KEY is the huggingface access token for faster downloading of the files and weights. class_indices can be kept as-is, unless you want to move this file anywhere else.
 
 API_KEY; your huggingface API key
 
@@ -11,8 +11,8 @@ cache_dir; set to any directory to house the HF cache, only relavent if your hom
 class_indices; The location of the class_indices directory. If running from the project repo directory directly, this does not need to be changed.
 
 - usage:
-    - After finalizing your settings, rename env_example to ".env" and make sure file is present in the project directory when running.
-    - ! These settings will only work if you run the script inside the project directory, so make sure to do this or else it will not function properly.
+    - After finalizing your settings, rename env_example to ".env" and make sure this file is present in the project directory when running.
+    - These settings will only work if you run the script inside the project directory, so make sure to do this or else it will not function properly.
 
 # Downloading required packages
 Multiple ways to install required packages, but UV is the easiest. The version numbers are VERY important due to BIOSCAN-1M requirements.
