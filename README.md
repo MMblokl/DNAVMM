@@ -70,7 +70,7 @@ To create a t-SNE visualization, simply run the following:
 
 To create a training and validation loss plot of multiple runs of a model:
 - Create a new dir "model_runs/" or "fusion_runs/" etc.
-- Copy all "metrics.py" files from all the runs into the new directory and make sure to rename them to something to identify what run they originated from "base", "hier", "hier_mod" etc.
+- Copy all model_metrics.npy files into the new directory and give them all a new name, for example: "hier_mod", "base", etc.
 - Create the plots with the following:
     - python3 plotcreator.py model_runs
 
