@@ -15,18 +15,19 @@ class_indices; The location of the class_indices directory. If running from the 
     - These settings will only work if you run the script inside the project directory, so make sure to do this or else it will not function properly.
 
 # Downloading required packages
-Multiple ways to install required packages, but UV is the easiest. The version numbers are VERY important due to BIOSCAN-1M requirements.
+There are multiple ways to install required packages, but UV is the easiest. The version numbers are VERY important due to BIOSCAN-5M requirements.
 - uv:
     - Download uv on your global python installation:
         - pip install uv
+        - pipx install uv
     - Restart your shell to get access to the uv command
     - Enter the project directory containing pyproject.toml
     - Download packages:
         - uv sync
-    - ! If uv doesnt work, set UV_CACHE_DIR to some other location, might be required on the leiden university computing clusters with the memory limitations.
-    - Run export using any cache location with higher storage limits:
-        - export UV_CACHE_DIR=/local/project/.cache/uv/ etc.
-        - uv sync
+    - ! If this fails, set UV_CACHE_DIR to some other location, might be required on the leiden university computing clusters with storage quotas on /home/.
+        - Run export using any cache location with higher storage limits:
+            - export UV_CACHE_DIR=/local/project/.cache/uv/ etc.
+            - uv sync
     - ! Python has to be run with uv using the uv run python command:
         - uv run python fusion.py run_1 hierarchical ds_rand augment
 - venv pip:
@@ -78,7 +79,7 @@ To create a training and validation loss plot of multiple runs of a model:
 
 
 # Dataset
-The dataset.py script is a script made for getting the BIOSCAN-1M dataset, and the model is also set up to only take this dataset as of writing.
+The dataset.py script is a script made for getting the BIOSCAN-5M dataset, and the model is also set up to only take this dataset as of writing.
 
 ! This script is quite old and only works using dataset==3.6.0, using any other version will make the script stop functioning.
 
