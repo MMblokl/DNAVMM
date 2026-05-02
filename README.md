@@ -85,7 +85,10 @@ The dataset.py script is a script from the BIOSCAN-5M authors and downloads the 
 The model automatically loads from a given checkpoint every 5 epochs, and will load from weights given a specific run_name.
 Every 5 epochs, model.weights will be replaced with the last weights to reduce memory usage.
 
-! Make sure to not run the script again if the model has finished training completely, as this might override results.
+**Important**
+- Make sure to not run the script again if the model has finished training completely, as this might override results.
 
 # Class indices
-The very first run of any model generated class_indices directory if it is not yet present. These indices are for reproducibility and for making sure the model checkpoint doesnt start training using different indices.
+The class_indices directory contains shared class indices for the BIOSCAN-5M dataset, and is generated again by any model script if removed. 
+**Important**
+- If removed, the link from indices to actuall classes dissapears, meaning you will have to re-train your from the start again.
