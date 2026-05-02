@@ -24,12 +24,12 @@ There are multiple ways to install required packages, but UV is the easiest. The
     - Enter the project directory containing pyproject.toml
     - Download packages:
         - uv sync
-    - ! If this fails, set UV_CACHE_DIR to some other location, might be required on the leiden university computing clusters with storage quotas on /home/.
+    - Python has to be run with uv using the uv run python command:
+        - uv run python fusion.py run_1 hierarchical ds_rand augment
+    - If this fails, set UV_CACHE_DIR to some other location, might be required on the leiden university computing clusters with storage quotas on /home/.
         - Run export using any cache location with higher storage limits:
             - export UV_CACHE_DIR=/local/project/.cache/uv/ etc.
             - uv sync
-    - ! Python has to be run with uv using the uv run python command:
-        - uv run python fusion.py run_1 hierarchical ds_rand augment
 - venv pip:
     - python -m venv .venv
     - source .venv/bin/activate
