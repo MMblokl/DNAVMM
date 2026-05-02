@@ -29,7 +29,7 @@ if __name__ == "__main__":
         ax.plot(epoch_range, eval_loss[0:epochs], linestyle="-", label=f"{run_name}_val", color=colours[i])
 
     ax.set(xlabel="Epochs", ylabel="Loss", title=f"{name} Traning and validation loss")
-    fig.set_size_inches(8, 4)
+    fig.set_size_inches(6, 4)
     plt.yticks([x for x in range(int(plt.yticks()[0][0]), int(plt.yticks()[0][-1] + 4), 2)])
     plt.legend(prop={'size': 6})
     plt.savefig(f"{name}_lossplot.png", dpi=300)
