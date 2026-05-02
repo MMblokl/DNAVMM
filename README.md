@@ -65,6 +65,16 @@ Command examples:
 - Using venv or conda:
     - python model.py /data/run_2/ hierarchical
 
+# Creating metric graphs
+To create a t-SNE visualization, simply run the following:
+- After running a model using run_name as the model run:
+    - python3 run_sne.py run_name
+To create a training and validation loss plot of multiple runs of a model:
+- Create a new dir "model_runs/" or "fusion_runs/" etc.
+- Copy all "metrics.py" files from all the runs into the new directory and make sure to rename them to something to identify what run they originated from "base", "hier", "hier_mod" etc.
+- Create the plots with the following:
+    - python3 plotcreator.py model_runs
+
 
 # Dataset
 The dataset.py script is a script made for getting the BIOSCAN-1M dataset, and the model is also set up to only take this dataset as of writing.
