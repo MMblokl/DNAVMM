@@ -50,15 +50,11 @@ There are multiple ways to install required packages, but UV is the easiest. The
     - scikit-learn
 
 # Running the models
-In order to run the model in different modes, specific arguments have to supplied when running the scripts.
-
-Very first argument should be the run directory, the location where all related files to the current one are saved; e.g. /data/user/run_1/
-
-Dataset randomization during training: "ds_rand"
-
-Data augmentation during training: "augment"
-
-Hierarchical training scheme: "hierarchical"
+In order to run the model with different settings, run the scripts with specific command line arguments:
+- **IMPORTANT** Very first argument should be the run directory, the location where all related files to the current one are saved; e.g. /data/user/run_1/
+- Dataset randomization during training: "ds_rand"
+- Data augmentation during training: "augment"
+- Hierarchical training scheme: "hierarchical"
 
 Command examples:
 - Using UV:
