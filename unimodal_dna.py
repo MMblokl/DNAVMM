@@ -10,27 +10,25 @@ from dotenv import load_dotenv
 
 from ModelModule import ModelModule
 
-
 load_dotenv()
 apitoken = os.getenv("API_KEY")
 
 global device 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
 class DNAEncoder(ModelModule):
     def __init__(
             self,
-            params: dict,
-            run_name: str,
-            d_enc: str = "zhihan1996/DNA_bert_6",
-            d_tokenizer: str = "zhihan1996/DNA_bert_6",
-            cache_dir: str | bool = False,
-            ds_randomization: bool = False,
-            augmentation: bool = False,
-            hierarchical: bool = False,
+            params: dict, # Dictionary of parameters
+            run_name: str, # Name of the run, dir will be created to save model metrics and weights
+            d_enc: str = "zhihan1996/DNA_bert_6", # DNA encoder checkpoint
+            cache_dir: str | bool = False, # Whether or not to use a cache_dir for huggingface
+            ds_randomization: bool = False, # Whether or not to use dataset randomization
+            augmentation: bool = False, # Whether or not to use augmentation for the data during training
+            hierarchical: bool = False, # Whether or not to use a hierarchical training scheme
         ):
 
+        # Load base functions from ModelModule
         super().__init__(
             params=params,
             run_name=run_name,
@@ -50,7 +48,7 @@ class DNAEncoder(ModelModule):
                 cache_dir=cache_dir,
             )
             self.dna_tokenizer = AutoTokenizer.from_pretrained(
-                d_tokenizer,
+                d_enc,
                 token=apitoken,
                 cache_dir=cache_dir,
             )
@@ -60,14 +58,14 @@ class DNAEncoder(ModelModule):
                 token=apitoken,
             )
             self.dna_tokenizer = AutoTokenizer.from_pretrained(
-                d_tokenizer,
+                d_enc,
                 token=apitoken,
             )
 
-        # Hardcoded output sizes of DINOV2_small and DNABERT_6
+        # Hardcoded output sizes of DNABERT_6
         d_enc_size = 768
 
-        # Create projection for to make BERT features better suited for classification
+        # Classification head
         self.class_head = nn.Sequential(
             nn.Linear(d_enc_size, 256),
             nn.LayerNorm(256),
@@ -80,7 +78,7 @@ class DNAEncoder(ModelModule):
             nn.Dropout(0.2),
             
             nn.Linear(128, [i for i in self.class_values.values()][0])
-            ) # Maps embedding to species classes
+            )
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         self.criterion = nn.CrossEntropyLoss()
@@ -99,23 +97,23 @@ class DNAEncoder(ModelModule):
         Returns:
             torch.tensor: The stacked tensor of the batch of images.
         """
-        # Get labels based on the class index mapping for the current labeltype
-        labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
-        
         # If augmentation is on and training mode is also on, random cropping of a 510-length sequence
         if self.augmentation and train:
             barcodes = self.kmer_crop(batch["dna_barcode"])
         else:
+            # If augmentation off, simply create kmers from uncropped barcode.
             barcodes = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in batch["dna_barcode"]]
         
-        # Tokenize our extracted barcode sequence
+        # Create tokens from extracted kmers
         tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True, truncation=True).to(device)
+        # Get labels based on the class index mapping for the current labeltype
+        labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
 
         return {"labels": torch.tensor(labels).long().to(device),
                 "barcodes": tokenized_barcodes}
 
 
-    def kmer_crop(self, barcodes, max_length=510, center: bool = False):    
+    def kmer_crop(self, barcodes, max_length=510):    
         """Crop a random portion of kmers from the barcode.
         
         Args:
@@ -125,12 +123,19 @@ class DNAEncoder(ModelModule):
         Returns:
             List of kmer crop kmers.
         """
-        if center:
-            starts = [(len(sequence) - max_length) // 2 for sequence in barcodes]            
-        else:
-            starts = [np.random.randint(0, len(sequence) - max_length) if len(sequence) > max_length else 0 for sequence in barcodes]
-        
-        crops = [seq[start:start + max_length] for start, seq in zip(starts, barcodes)]
+        # Get start index of sequence crop based on sequence length
+
+        starts = [
+            np.random.randint(0, len(sequence) - max_length)
+            if len(sequence) > max_length else 0
+            for sequence in barcodes
+        ]
+        # Crop the sequences based on starts
+        crops = [
+            seq[start:start + max_length] 
+            for start, seq in zip(starts, barcodes)
+        ]
+        # Retrieve kmers from cropped sequences
         kmer_crops = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in crops]
         return kmer_crops
 
@@ -138,6 +143,8 @@ class DNAEncoder(ModelModule):
     def forward(self, batch):
         # CLS token as embedding
         embedding = self.dna_encoder(**batch["barcodes"]).last_hidden_state[:,0]
+        
+        # Pass through class head
         logits = self.class_head(embedding)
 
         return logits
@@ -166,7 +173,7 @@ if __name__ == "__main__":
     # Enable dataset randomization, False for no randomization
     ds_randomization = True if "ds_rand" in options else False
 
-    # Enable image augmentation, False for no image augmention
+    # Enable data augmentation, False for no image augmention
     augmentation = True if "augment" in options else False
 
     # Create save location directory
@@ -193,12 +200,13 @@ if __name__ == "__main__":
     print("Loading/Downloading validation dataset.")
 
     # Load the BIOSCAN5M validation dataset
-    eval_dataset = load_dataset("dataset.py", 
-                                name="cropped_256_eval", 
-                                split="validation", 
-                                trust_remote_code=True,
-                                token=apitoken,
-                                cache_dir=cache_dir
+    eval_dataset = load_dataset(
+        "dataset.py", 
+        name="cropped_256_eval", 
+        split="validation", 
+        trust_remote_code=True,
+        token=apitoken,
+        cache_dir=cache_dir
     )
     eval_dataset = eval_dataset.with_format("torch", device=device)
     
@@ -239,6 +247,8 @@ if __name__ == "__main__":
         family_dict = np.load(f"{class_indices_path}family.npy", allow_pickle=True).item()
         genus_dict = np.load(f"{class_indices_path}genus.npy", allow_pickle=True).item()
         species_dict = np.load(f"{class_indices_path}species.npy", allow_pickle=True).item()
+    
+    # Set parameters based on training scheme.
     if hierarchical:
         parameters = dict(
             lr = 5e-5,

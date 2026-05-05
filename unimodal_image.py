@@ -20,16 +20,18 @@ global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class VisualEncoder(ModelModule):
-    def __init__(self,
-                params: dict,
-                run_name: str,
-                v_enc: str = "facebook/dinov2-small",
-                i_processor: str = "facebook/dinov2-small",
-                cache_dir: str | bool = False,
-                ds_randomization: bool = False,
-                augmentation: bool = False,
-                hierarchical: bool = False
-                ):
+    def __init__(
+            self,
+            params: dict, # Dictionary of parameters
+            run_name: str, # Name of the run, dir will be created to save model metrics and weights
+            v_enc: str = "facebook/dinov2-small", # Visual encoder checkpoint
+            cache_dir: str | bool = False, # Whether or not to use a cache_dir for huggingface
+            ds_randomization: bool = False, # Whether or not to use dataset randomization
+            augmentation: bool = False, # Whether or not to use augmentation for the data during training
+            hierarchical: bool = False, # Whether or not to use a hierarchical training scheme
+        ):
+        
+        # Load base functions from ModelModule
         super().__init__(
             params=params,
             run_name=run_name,
@@ -46,7 +48,7 @@ class VisualEncoder(ModelModule):
                 cache_dir=cache_dir
             )
             self.i_processor = AutoImageProcessor.from_pretrained(
-                i_processor,
+                v_enc,
                 token=apitoken,
                 cache_dir=cache_dir
             )
@@ -57,11 +59,11 @@ class VisualEncoder(ModelModule):
                 token=apitoken
             )
             self.i_processor = AutoImageProcessor.from_pretrained(
-                i_processor,
+                v_enc,
                 token=apitoken
             )
 
-        # Initialize the hardcoded output size of DINOV2_small
+        # Initialize the output size of DINOV2_small
         v_enc_size = 384
 
         # Set the Fully connected classification head
@@ -111,13 +113,11 @@ class VisualEncoder(ModelModule):
             train (boolean): Training mode yes/no.
 
         Returns:
-            torch.tensor: The stacked tensor of the batch of images.
-            labels: The stacked tensor of the corresponding labels of the batch of images.
+            Dictionary containing images and labels of the supplied batch.
         """
         images = batch["image"]
 
-        # Determine whether to perform image augmentations on the training images
-        # If we are in evaluation mode this is turned off
+        # If augmentation is on and we are in training mode.
         if self.augmentation and train:
             # Apply the image augmentation method to every image
             images = [self.augment(img) for img in images]
@@ -140,12 +140,18 @@ class VisualEncoder(ModelModule):
 
         return logits
 
-    def freezeencoders(self, until):
+    def freezeencoders(self, until: int) -> None:
         """Function called during training loop, needs to be specified in each implementation for their respective encoders"""
         self.freeze_until(self.visual_encoder, until)
 
-    def visualize_augment(self, train_dataset, save_path, n_images):
-        """Visualization of some image augmentation operations."""
+    def visualize_augment(self, train_dataset, save_path: str, n_images: int) -> None:
+        """Visualization of some image augmentation operations.
+        
+        Args:
+            train_dataset: The training dataset.
+            save_path (string): Path to save figure to.
+            n_images (integer): Number of images to visualize.
+        """
         # Create the output directory for the image plots
         os.makedirs(save_path, exist_ok=True)
 
@@ -195,7 +201,7 @@ if __name__ == "__main__":
     # Enable dataset randomization, False for no randomization
     ds_randomization = True if "ds_rand" in options else False
 
-    # Enable image augmentation, False for no image augmention
+    # Enable data augmentation, False for no image augmention
     augmentation = True if "augment" in options else False
 
     # Enable cache directory, None for no cache directory
@@ -268,6 +274,7 @@ if __name__ == "__main__":
         genus_dict = np.load(f"{class_indices_path}genus.npy", allow_pickle=True).item()
         species_dict = np.load(f"{class_indices_path}species.npy", allow_pickle=True).item()
 
+    # Select parameters based on training scheme.
     if hierarchical:
         # Initialize parameters to perform hierarchical training
         parameters = dict(
@@ -303,7 +310,6 @@ if __name__ == "__main__":
                 "species": 9,
                 }
         )
-    
     else:
         # Initialize the parameters to perform singular species training
         parameters = dict(
