@@ -314,8 +314,8 @@ if __name__ == "__main__":
         # Initialize the parameters to perform singular species training
         parameters = dict(
             lr = 5e-5,
-            steps_per_epoch=1,
-            batch_size=1,
+            steps_per_epoch=200,
+            batch_size=16,
             class_values = {
                 "species": n_species,
                 },
@@ -323,7 +323,7 @@ if __name__ == "__main__":
                 "species": species_dict,
                 },
             epoch_ordering = {
-                "species": 1
+                "species": 100
                 }, # Number of epochs for each step.
             layer_freezing = {
                 "species": None,
