@@ -39,7 +39,7 @@ if __name__ == "__main__":
         # Eval loss is solid line
         ax.plot(epoch_range, eval_loss[0:epochs], linestyle="-", label=f"{run_name}_val", color=colours[i])
 
-    ax.set(xlabel="Epochs", ylabel="Loss", title=f"{name} Traning and validation loss")
+    ax.set(xlabel="Epochs", ylabel="Loss", title=f"{name} Training and validation loss")
     fig.set_size_inches(6, 4) # Force figure to take size of 6 x 4 inch.
     
     # Set yticks to have some extra padding.
