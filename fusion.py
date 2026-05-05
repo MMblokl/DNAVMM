@@ -20,19 +20,17 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class DNAVMM(ModelModule):
     def __init__(
             self,
-            params: dict,
-            run_name: str,
-            d_enc: str = "zhihan1996/DNA_bert_6",
-            v_enc: str = "facebook/dinov2-small",
-            d_tokenizer: str = "zhihan1996/DNA_bert_6",
-            i_processor: str = 'facebook/dinov2-small',
-            cache_dir: str | bool = False,
-            ds_randomization: bool = False,
-            augmentation: bool = False,
-            hierarchical: bool = False,
+            params: dict, # Dictionary of parameters
+            run_name: str, # Name of the run, dir will be created to save model metrics and weights
+            d_enc: str = "zhihan1996/DNA_bert_6", # DNA encoder checkpoint
+            v_enc: str = "facebook/dinov2-small", # Visual encoder checkpoint
+            cache_dir: str | bool = False, # Whether or not to use a cache_dir for huggingface
+            ds_randomization: bool = False, # Whether or not to use dataset randomization
+            augmentation: bool = False, # Whether or not to use augmentation for the data during training
+            hierarchical: bool = False, # Whether or not to use a hierarchical training scheme
         ):
         
-        # Init all base functions
+        # Load base functions from ModelModule
         super().__init__(
             params=params,
             run_name=run_name,
@@ -54,12 +52,12 @@ class DNAVMM(ModelModule):
                 cache_dir=cache_dir,
             )
             self.dna_tokenizer = AutoTokenizer.from_pretrained(
-                d_tokenizer,
+                d_enc,
                 token=apitoken,
                 cache_dir=cache_dir,
             )
             self.i_processor = AutoImageProcessor.from_pretrained(
-                i_processor,
+                v_enc,
                 token=apitoken,
                 cache_dir=cache_dir,
             )
@@ -73,11 +71,11 @@ class DNAVMM(ModelModule):
                 token=apitoken,
             )
             self.dna_tokenizer = AutoTokenizer.from_pretrained(
-                d_tokenizer,
+                d_enc,
                 token=apitoken,
             )
             self.i_processor = AutoImageProcessor.from_pretrained(
-                i_processor,
+                v_enc,
                 token=apitoken,
             )
         
@@ -157,6 +155,7 @@ class DNAVMM(ModelModule):
 
         tokenized_barcodes = self.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True, truncation=True).to(device)
         images = self.i_processor(images=images, return_tensors="pt").to(device)
+        # Retrieve labels of current label type from batch.
         labels = [self.class_mapping[self.labeltype][i] for i in batch[self.labeltype]]
         
         return {"images": images,
@@ -164,7 +163,7 @@ class DNAVMM(ModelModule):
                 "barcodes": tokenized_barcodes}
    
 
-    def kmer_crop(self, barcodes, max_length=510, center: bool = False):    
+    def kmer_crop(self, barcodes, max_length=510):    
         """Crop a random portion of kmers from the barcode.
         
         Args:
@@ -174,19 +173,23 @@ class DNAVMM(ModelModule):
         Returns:
             List of kmer crop kmers.
         """
-        if center:
-            starts = [(len(sequence) - max_length) // 2 for sequence in barcodes]            
-        else:
-            starts = [np.random.randint(0, len(sequence) - max_length) if len(sequence) > max_length else 0 for sequence in barcodes]
-        
-        crops = [seq[start:start + max_length] for start, seq in zip(starts, barcodes)]
+        # Get start index of sequence crop based on sequence length
+        starts = [
+            np.random.randint(0, len(sequence) - max_length) 
+            if len(sequence) > max_length else 0 
+            for sequence in barcodes
+        ]
+        # Crop the sequences based on starts
+        crops = [
+            seq[start:start + max_length] 
+            for start, seq in zip(starts, barcodes)
+        ]
+        # Retrieve kmers from cropped sequence
         kmer_crops = [" ".join([seq[i:i+self.k] for i in range(len(seq) - self.k + 1)]) for seq in crops]
         return kmer_crops
 
 
     def forward(self, batch):
-        #v_embedding = self.visual_encoder(images).last_hidden_state.mean(dim=1)
-        #d_embedding = self.dna_encoder(**dna).last_hidden_state.mean(dim=1)
         # CLS for embedding.
         v_embedding = self.visual_encoder(**batch["images"]).last_hidden_state[:,0]
         d_embedding = self.dna_encoder(**batch["barcodes"]).last_hidden_state[:,0]
@@ -218,7 +221,7 @@ if __name__ == "__main__":
     # Enable dataset randomization, False for no randomization
     ds_randomization = True if "ds_rand" in options else False
 
-    # Enable image augmentation, False for no image augmention
+    # Enable data augmentation, False for no image augmention
     augmentation = True if "augment" in options else False
 
     # Create save location directory
@@ -244,12 +247,13 @@ if __name__ == "__main__":
     print("Loading/downloading validation dataset")
 
     # Load the BIOSCAN5M validation dataset
-    eval_dataset = load_dataset("dataset.py", 
-                                name="cropped_256_eval", 
-                                split="validation", 
-                                trust_remote_code=True,
-                                token=apitoken,
-                                cache_dir=cache_dir
+    eval_dataset = load_dataset(
+        "dataset.py", 
+        name="cropped_256_eval", 
+        split="validation", 
+        trust_remote_code=True,
+        token=apitoken,
+        cache_dir=cache_dir
     )
     eval_dataset = eval_dataset.with_format("torch", device=device)
     
@@ -290,6 +294,7 @@ if __name__ == "__main__":
         genus_dict = np.load(f"{class_indices_path}genus.npy", allow_pickle=True).item()
         species_dict = np.load(f"{class_indices_path}species.npy", allow_pickle=True).item()
 
+    # Select parameters based on training scheme.
     if hierarchical:
         parameters = dict(
             lr = 5e-5,
@@ -346,7 +351,7 @@ if __name__ == "__main__":
         )
 
     print(f"Running model on {run_name}, with hierarchical: {hierarchical}, ds_rand: {ds_randomization}, augmentation: {augmentation}.")
-
+    
     model = DNAVMM(
         cache_dir=cache_dir,
         params=parameters,

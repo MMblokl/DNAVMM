@@ -12,11 +12,11 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class ModelModule(nn.Module):
     def __init__(
             self,
-            params: dict,
-            run_name: str,
-            ds_randomization: bool = False,
-            augmentation: bool = False,
-            hierarchical: bool = False
+            params: dict, # Base parameter set dictionary
+            run_name: str, # Name of the experiment run, name of dictionary to save metrics and weights
+            ds_randomization: bool = False, # Whether of not to use dataset randomization
+            augmentation: bool = False, # Whether or not to use data augmentation
+            hierarchical: bool = False # Whether or not to use a hierarchical training schemes
         ):
         super(ModelModule, self).__init__()
         
@@ -45,14 +45,14 @@ class ModelModule(nn.Module):
         self.eval_f1 = 0
 
 
-    def train_loop(self, train_dataset, eval_dataset):
-        """Loop through the class and label types"""
-        # Create a list for each label type.
+    def train_loop(self, train_dataset, eval_dataset) -> None:
+        """Training loop for initialized model."""
+        # Create a list of the first until the last label to train on based on the parameters.
         label_options = [i for i in self.class_values.keys()]
         
         # If loaded from checkpoint, this value is already initialized
         try:
-            # Recreate list for each label type based on where model left of
+            # Recreate label list to remove labels already finished.
             label_options = label_options[label_options.index(self.labeltype):]
             self.check_start = True # Whether optimizer and class head needs to be updated
             epochs = self.epoch_ordering[self.labeltype] # Number of epochs for the label type
@@ -75,10 +75,8 @@ class ModelModule(nn.Module):
             if not self.check_start:
                 # Replace the final class head layer with a new output layer that matches the number of classes
                 self.class_head[8] = nn.Linear(128, self.class_values[self.labeltype]).to(device)
-
                 # Create epoch range for new epoch loop
                 epoch_range = [i for i in range(epochs)]
-
                 # Set the optimizer to only optimise trainable weights with requires_grad=True
                 self.update_optimizer()
 
@@ -93,16 +91,14 @@ class ModelModule(nn.Module):
                     train_dataset = train_dataset.shuffle()
                 
                 # Check for the final epoch when calling self.fit and self.evaluate
-                # Final epoch
                 if self.c_epoch == epochs:
                     # Train on the dataset for an entire epoch
                     train_correct, train_total, train_loss, train_preds, train_labels = self.fit(train_dataset=train_dataset, final=True)
 
                     # Test the validation dataset for an entire epoch
                     eval_correct, eval_total, eval_loss, eval_preds, eval_labels = self.evaluate(eval_dataset=eval_dataset, final=True)
-
-                # Every epoch
                 else:
+                    # Fit and evaluate the model on the current dataset shuffle.
                     train_loss = self.fit(train_dataset=train_dataset, final=False)
                     eval_loss = self.evaluate(eval_dataset=eval_dataset, final=False)
 
@@ -135,7 +131,13 @@ class ModelModule(nn.Module):
         print("Training loss log: ", self.train_loss.mean(axis=1)[:-1])
 
 
-    def plot_metrics(self, save_path):
+    def plot_metrics(self, save_path: str) -> None:
+        """Plot function to be called at the end of a training cycle that plots the training
+        and evaluation loss of the one model in a graph.
+
+        Args:
+            save_path (string): Save location of the plot.
+        """
         # Set the number of epochs used for the plots
         epochs = range(1, self.epoch_ordering["species"]+1)
   
@@ -148,7 +150,13 @@ class ModelModule(nn.Module):
         fig.savefig(f"{save_path}/loss_plot.png")
 
 
-    def save(self, path):
+    def save(self, path: str) -> None:
+        """Save current state of the model to model_metrics.npy and latest.pt,
+        saved in the run_name directory.
+
+        Args:
+            path (string): Location to save the metrics and weigths
+        """
         # Save the weights
         torch.save({
             "model": self.state_dict(),
@@ -173,14 +181,11 @@ class ModelModule(nn.Module):
         np.save(f"{path}/model_metrics.npy", metrics)
 
 
-    def load(self, path):
+    def load(self, path: str) -> None:
         """Load the parameters from a specified checkpoint
 
         Args:
             path: (string): Filepath to the checkpoint.pt file.
-        
-        Returns:
-            None
         """
         # Load the optimizer and model weigths from checkpoint
         checkpoint = torch.load(path)
@@ -194,13 +199,13 @@ class ModelModule(nn.Module):
                     state[k] = v.to(device)
 
     
-    def update_optimizer(self):
+    def update_optimizer(self) -> None:
         """Updates the optimizer to only use the trainable model params"""
         trainable_params = filter(lambda p: p.requires_grad, self.parameters())
         self.optimizer = torch.optim.Adam(trainable_params, lr=self.lr)
     
     
-    def freeze_until(self, model, until):
+    def freeze_until(self, model, until: int) -> None:
         """Freezes the weights of a given model according to the given the value. If until=1, first 2 layers are frozen."""
         for i, layer in enumerate(model.encoder.layer):
             # If the index is with in the to be frozen layers
@@ -208,14 +213,11 @@ class ModelModule(nn.Module):
                 for param in layer.parameters():
                     param.requires_grad = False
 
-    def start_from_checkpoint(self, path):
+    def start_from_checkpoint(self, path: str) -> None:
         """ Start the model from a checkpoint, should be called at the model init phase.
 
         Args:
             path (string): Filepath to checkpoint.pt file.
-        
-        Returns:
-            None
         """
         # Load saved metrics
         metrics = np.load(f"{path}/model_metrics.npy", allow_pickle=True).item()

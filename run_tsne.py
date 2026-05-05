@@ -14,7 +14,7 @@ from unimodal_dna import DNAEncoder
 from fusion import DNAVMM
 
 load_dotenv()
-apitoken =os.getenv("API_KEY")
+apitoken = os.getenv("API_KEY")
 
 global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -49,7 +49,7 @@ class TSNE_Visualiser:
 
         return embedding
 
-    def collate_fn(self, batch, train: bool = True):
+    def collate_fn(self, batch: dict, train: bool = True):
         """Custom collation function for dataloader, extract images from the batch and pad them with the largest width from the widest image.
 
         Args:
@@ -60,16 +60,19 @@ class TSNE_Visualiser:
             torch.tensor: The stacked tensor of the batch of images.
         """
         images = batch["image"]
-
+        
+        # If on training mode and augmentation is on.
         if self.model.augmentation and train:
             # Apply the image augmentation method to every image
             images = [self.model.augment(img) for img in images]
             barcodes = self.model.kmer_crop(batch["dna_barcode"])
         else:
+            # If augmentation off, simply create kmers from uncropped barcode.
             barcodes = [" ".join([seq[i:i+self.model.k] for i in range(len(seq) - self.model.k + 1)]) for seq in batch["dna_barcode"]]
 
         tokenized_barcodes = self.model.dna_tokenizer(barcodes, return_tensors = 'pt', padding=True, truncation=True).to(device)
         images = self.model.i_processor(images=images, return_tensors="pt").to(device)
+        # Get labels based on current model's label setting.
         labels = [self.model.class_mapping[self.model.labeltype][i] for i in batch[self.model.labeltype]]
         
         return {"images": images,
@@ -81,6 +84,10 @@ class TSNE_Visualiser:
         Running the t-SNE on the embedding extracted from the validation dataset, using a limited number of batches
         
         Args:
+            dataset: Dataset to create t-sne from
+            save_path (string): Path to save the figures to
+            max_timestemps (integer): Number of batches to create embeddings for
+            labelgroup (string): The labelgroup to get the embeddings for "species", "genus", etc.
 
         Single evaluation run on the dataset for a limited number of batches
         """
@@ -89,14 +96,13 @@ class TSNE_Visualiser:
         embedding_list = []
         label_list = []
 
+        # Starting index location of the current batch.
         prev = 0
-
+        # Set labeltype to selected labelgroup
         self.model.labeltype = labelgroup
 
         with torch.no_grad(): # Disable gradient computation for the t-sne on the validation dataset
             for timestep, idx in enumerate(range(self.model.batch_size, len(dataset), self.model.batch_size)):
-                print(timestep)
-
                 # Collate the dataset to get the batches needed to evaluate the model
                 batch = self.collate_fn(dataset[prev:idx])
 
@@ -152,7 +158,7 @@ if __name__ == "__main__":
     # Enable dataset randomization, False for no randomization
     ds_randomization = True if "ds_rand" in options else False
 
-    # Enable image augmentation, False for no image augmention
+    # Enable data augmentation, False for no image augmention
     augmentation = True if "augment" in options else False
 
     # Enable cache directory, None for no cache directory
@@ -310,12 +316,12 @@ if __name__ == "__main__":
     tsne = TSNE_Visualiser(model)
     print("Running the t-SNE.")
     tsne.run_tsne(
-    dataset=eval_dataset,
-    save_path=f"{run_name}/",
-    labelgroup="genus"
+        dataset=eval_dataset,
+        save_path=f"{run_name}/",
+        labelgroup="genus"
     )
     tsne.run_tsne(
-    dataset=eval_dataset,
-    save_path=f"{run_name}/",
-    labelgroup="species"
+        dataset=eval_dataset,
+        save_path=f"{run_name}/",
+        labelgroup="species"
     )
