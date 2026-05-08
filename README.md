@@ -95,4 +95,4 @@ The class_indices directory contains shared class indices for the BIOSCAN-5M dat
 - If removed, the link from indices to actual classes dissapears, meaning you will have to re-train your model from the start again.
 
 # README report
-<iframe src="path/to/your.pdf" width="100%" height="500px"></iframe>
+<iframe src="./MMBEX_G1_README.pdf" width="100%" height="500px"></iframe>
